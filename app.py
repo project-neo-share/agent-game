@@ -29,9 +29,9 @@ def get_secret(k: str, default: str=""):
     except Exception:
         return os.getenv(k, default)
 
-# ==================== DNA-R1 Client ====================
+# ==================== DNA-R2 Client ====================
 def _render_chat_template_str(messages: List[Dict[str,str]]) -> str:
-    """DNA-R1용 수동 템플릿 렌더링 (<|im_start|> … 포맷)."""
+    """DNA-R2용 수동 템플릿 렌더링 (<|im_start|> … 포맷)."""
     def block(role, content): return f"<|im_start|>{role}<|im_sep|>{content}<|im_end|>"
     sys = ""
     rest = []
@@ -55,14 +55,14 @@ class DNAClient:
     """
     def __init__(self,
                  backend: str = "hf-api",
-                 model_id: str = "dnotitia/DNA-R1",
+                 model_id: str = "dnotitia/DNA-R2",
                  hf_token: Optional[str] = None,
                  endpoint_url: Optional[str] = None,
                  temperature: float = 0.7):
         self.backend = backend
         self.model_id = model_id
         self.hf_token = hf_token or get_secret("HF_TOKEN") or get_secret("HUGGINGFACEHUB_API_TOKEN")
-        self.endpoint_url = endpoint_url or get_secret("DNA_R1_ENDPOINT", "")
+        self.endpoint_url = endpoint_url or get_secret("DNA_R2_ENDPOINT", "")
         self.temperature = temperature
 
         self._tok = None
@@ -432,9 +432,9 @@ backend = st.sidebar.selectbox("백엔드", ["openai","hf-api","tgi","local"], i
 temperature = st.sidebar.slider("창의성(temperature)", 0.0, 1.5, 0.7, 0.1)
 
 # 엔드포인트/토큰/모델
-endpoint = st.sidebar.text_input("엔드포인트(OpenAI/TGI):", value=get_secret("DNA_R1_ENDPOINT","http://210.93.49.11:8081/v1"))
+endpoint = st.sidebar.text_input("엔드포인트(OpenAI/TGI):", value=get_secret("DNA_R2_ENDPOINT","http://210.93.49.11:8081/v1"))
 hf_token = st.sidebar.text_input("HF_TOKEN (또는 내부 토큰)", value=get_secret("HF_TOKEN",""), type="password")
-model_id = st.sidebar.text_input("모델 ID", value=get_secret("DNA_R1_MODEL_ID","dnotitia/DNA-R1"))
+model_id = st.sidebar.text_input("모델 ID", value=get_secret("DNA_R1_MODEL_ID","dnotitia/DNA-R2"))
 
 # 헬스체크(모델 메타 + 간단 호출)
 if st.sidebar.button("🔎 헬스체크"):
@@ -454,7 +454,7 @@ if st.sidebar.button("🔎 헬스체크"):
             st.sidebar.write(f"OPENAI {r.status_code}")
             st.sidebar.code((r.text[:500] + "...") if len(r.text)>500 else r.text)
         else:
-            repo_id = model_id.strip() or "dnotitia/DNA-R1"
+            repo_id = model_id.strip() or "dnotitia/DNA-R2"
             headers = {"Authorization": f"Bearer {hf_token}"} if hf_token else {}
             info_url = f"https://huggingface.co/api/models/{repo_id}"
             r_info = httpx.get(info_url, headers=headers, timeout=30)
