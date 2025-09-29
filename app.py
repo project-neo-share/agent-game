@@ -434,7 +434,7 @@ temperature = st.sidebar.slider("창의성(temperature)", 0.0, 1.5, 0.7, 0.1)
 # 엔드포인트/토큰/모델
 endpoint = st.sidebar.text_input("엔드포인트(OpenAI/TGI):", value=get_secret("DNA_R2_ENDPOINT","http://210.93.49.11:8081/v1"))
 hf_token = st.sidebar.text_input("HF_TOKEN (또는 내부 토큰)", value=get_secret("HF_TOKEN",""), type="password")
-model_id = st.sidebar.text_input("모델 ID", value=get_secret("DNA_R1_MODEL_ID","dnotitia/DNA-R2"))
+model_id = st.sidebar.text_input("모델 ID", value=get_secret("DNA_R2_MODEL_ID","dnotitia/DNA-R2"))
 
 # 헬스체크(모델 메타 + 간단 호출)
 if st.sidebar.button("🔎 헬스체크"):
