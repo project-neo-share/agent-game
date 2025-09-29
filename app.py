@@ -251,7 +251,7 @@ def normalize_weights(w: Dict[str, float]) -> Dict[str, float]:
     s = sum(max(0.0, float(v)) for v in w.values())
     if s <= 0:  # 균등
         return {k: 1.0/len(w) for k in w}
-   return {k: max(0.0, float(v))/s for k, v in w.items()}
+    return {k: max(0.0, float(v))/s for k, v in w.items()}
 
 def majority_vote_decision(scn: Scenario, weights: Dict[str, float]) -> Tuple[str, Dict[str, float]]:
     a = sum(weights[f] for f in FRAMEWORKS if scn.votes[f] == "A")
