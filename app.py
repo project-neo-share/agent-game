@@ -48,8 +48,9 @@ class DNAHTTPError(Exception):
 class DNAClient:
     """
     backend:
-      - 'hf-api' (기본): Hugging Face Inference API
-      - 'tgi'    : Text Generation Inference (Inference Endpoints 등)
+      - 'openai': OpenAI 호환 Chat Completions (예: http://210.93.49.11:8081/v1)
+      - 'hf-api': Hugging Face Inference API (서버리스)
+      - 'tgi'    : Text Generation Inference (Endpoints 등)
       - 'local'  : 로컬 Transformers 로딩 (GPU 권장)
     """
     def __init__(self,
@@ -80,6 +81,7 @@ class DNAClient:
     @retry(wait=wait_exponential(multiplier=1, min=1, max=10),
            stop=stop_after_attempt(5), reraise=True)
     def _generate_text(self, messages: List[Dict[str,str]], max_new_tokens: int = 600) -> str:
+        # ---------- LOCAL ----------
         if self.backend == "local":
             if not self._local_ready:
                 raise RuntimeError("로컬 백엔드가 준비되지 않았습니다.")
@@ -97,12 +99,33 @@ class DNAClient:
             )
             return self._tok.decode(gen[0][inputs.shape[-1]:], skip_special_tokens=True)
 
-        prompt = _render_chat_template_str(messages)
+        # 공통
         headers = {"Authorization": f"Bearer {self.hf_token}"} if self.hf_token else {}
         timeout = httpx.Timeout(120.0)
 
+        # ---------- OPENAI-COMPAT ----------
+        if self.backend == "openai":
+            if not self.endpoint_url:
+                raise RuntimeError("OpenAI 호환 endpoint_url이 필요합니다. 예) http://210.93.49.11:8081/v1")
+            url = self.endpoint_url.rstrip("/") + "/chat/completions"
+            payload = {
+                "model": self.model_id,               # 서버가 무시해도 무방
+                "messages": messages,                 # role/content 그대로 전달
+                "temperature": self.temperature,
+                "max_tokens": max_new_tokens
+            }
+            r = httpx.post(url, json=payload, headers=headers, timeout=timeout)
+            try:
+                r.raise_for_status()
+            except httpx.HTTPStatusError as e:
+                raise DNAHTTPError(f"OPENAI {r.status_code}: {r.text}") from e
+            data = r.json()
+            text = data["choices"][0]["message"]["content"]
+            return text
+
+        # ---------- TGI ----------
+        prompt = _render_chat_template_str(messages)
         if self.backend == "tgi":
-            # TGI는 parameters.stop 사용
             url = self.endpoint_url.rstrip("/") + "/generate"
             payload = {
                 "inputs": prompt,
@@ -125,7 +148,7 @@ class DNAClient:
                     if isinstance(data, dict) else data[0].get("generated_text", ""))
             return text
 
-        # 기본: hf-api (서버리스 Inference API)
+        # ---------- HF-API ----------
         url = f"https://api-inference.huggingface.co/models/{self.model_id}"
         payload = {
             "inputs": prompt,
@@ -145,7 +168,6 @@ class DNAClient:
         try:
             r.raise_for_status()
         except httpx.HTTPStatusError as e:
-            # 400(파라미터 검증 실패) 시 stop_sequences 제거 후 폴백 1회
             if r.status_code == 400 and "stop" in r.text:
                 payload["parameters"].pop("stop_sequences", None)
                 r2 = httpx.post(url, json=payload, headers=headers, timeout=timeout)
@@ -271,7 +293,6 @@ SCENARIOS: List[Scenario] = [
 
 # ==================== Ethics Engine ====================
 def normalize_weights(w: Dict[str, float]) -> Dict[str, float]:
-    # 빈 입력 → 균등
     if not w:
         return {k: 1.0/len(FRAMEWORKS) for k in FRAMEWORKS}
     s = sum(max(0.0, float(v)) for v in w.values())
@@ -334,7 +355,7 @@ def compute_metrics(scn: Scenario, choice: str, weights: Dict[str, float], align
         "ai_trust_score": round(ai_trust_score, 2)
     }}
 
-# ==================== Narrative (DNA-R1) ====================
+# ==================== Narrative (LLM) ====================
 def build_narrative_messages(scn: Scenario, choice: str, metrics: Dict[str, Any], weights: Dict[str, float]) -> List[Dict[str,str]]:
     sys = (
         "당신은 윤리 시뮬레이션의 내러티브/사회 반응 생성기입니다. "
@@ -388,7 +409,7 @@ init_state()
 
 # ==================== Sidebar ====================
 st.sidebar.title("⚙️ 설정")
-st.sidebar.caption("DNA‑R1은 내러티브/사회 반응 생성에만 사용. 점수 계산은 규칙 기반.")
+st.sidebar.caption("LLM은 내러티브/사회 반응 생성에만 사용. 점수 계산은 규칙 기반.")
 
 preset = st.sidebar.selectbox("윤리 모드 프리셋", ["혼합(기본)","공리주의","의무론","사회계약","미덕윤리"], index=0)
 w = {
@@ -406,26 +427,53 @@ if preset != "혼합(기본)":
     }[preset]
 weights = normalize_weights(w)
 
-use_llm = st.sidebar.checkbox("DNA‑R1 사용(내러티브 생성)", value=True)
-backend = st.sidebar.selectbox("DNA‑R1 백엔드", ["hf-api","tgi","local"], index=0)
+use_llm = st.sidebar.checkbox("LLM 사용(내러티브 생성)", value=True)
+backend = st.sidebar.selectbox("백엔드", ["openai","hf-api","tgi","local"], index=0)
 temperature = st.sidebar.slider("창의성(temperature)", 0.0, 1.5, 0.7, 0.1)
-endpoint = st.sidebar.text_input("TGI Endpoint URL", value=get_secret("DNA_R1_ENDPOINT",""))
-hf_token = st.sidebar.text_input("HF_TOKEN (Inference API/Endpoint)", value=get_secret("HF_TOKEN",""), type="password")
-model_id = st.sidebar.text_input("모델 ID(로컬/엔드포인트 공통)", value=get_secret("DNA_R1_MODEL_ID","dnotitia/DNA-R1"))
 
-# 헬스체크
-if st.sidebar.button("🔎 HF API 헬스체크"):
+# 엔드포인트/토큰/모델
+endpoint = st.sidebar.text_input("엔드포인트(OpenAI/TGI):", value=get_secret("DNA_R1_ENDPOINT","http://210.93.49.11:8081/v1"))
+hf_token = st.sidebar.text_input("HF_TOKEN (또는 내부 토큰)", value=get_secret("HF_TOKEN",""), type="password")
+model_id = st.sidebar.text_input("모델 ID", value=get_secret("DNA_R1_MODEL_ID","dnotitia/DNA-R1"))
+
+# 헬스체크(모델 메타 + 간단 호출)
+if st.sidebar.button("🔎 헬스체크"):
+    import traceback
     try:
-        dummy_client = DNAClient(backend=backend, model_id=model_id, hf_token=hf_token, endpoint_url=endpoint, temperature=temperature)
-        test_msgs = [
-            {"role":"system","content":"오직 JSON만. 키: msg"},
-            {"role":"user","content":"{\"ask\":\"ping\"}"}
-        ]
-        txt = dummy_client._generate_text(test_msgs, max_new_tokens=64)  # noqa
-        st.sidebar.success("호출 성공")
-        st.sidebar.code((txt[:400] + "...") if len(txt) > 400 else txt)
+        if backend == "openai":
+            url = endpoint.rstrip("/") + "/chat/completions"
+            payload = {
+                "model": model_id,
+                "messages": [
+                    {"role":"system","content":"오직 JSON만. 키: msg"},
+                    {"role":"user","content":"{\"ask\":\"ping\"}"}
+                ],
+                "max_tokens": 16
+            }
+            r = httpx.post(url, json=payload, headers={"Authorization": f"Bearer {hf_token}"} if hf_token else {}, timeout=30)
+            st.sidebar.write(f"OPENAI {r.status_code}")
+            st.sidebar.code((r.text[:500] + "...") if len(r.text)>500 else r.text)
+        else:
+            repo_id = model_id.strip() or "dnotitia/DNA-R1"
+            headers = {"Authorization": f"Bearer {hf_token}"} if hf_token else {}
+            info_url = f"https://huggingface.co/api/models/{repo_id}"
+            r_info = httpx.get(info_url, headers=headers, timeout=30)
+            st.sidebar.write(f"MODEL INFO {r_info.status_code}")
+            if r_info.status_code == 200:
+                # 짧은 생성
+                client_tmp = DNAClient(backend=backend, model_id=repo_id, hf_token=hf_token, endpoint_url=endpoint, temperature=temperature)
+                test_msgs = [
+                    {"role":"system","content":"오직 JSON만. 키: msg"},
+                    {"role":"user","content":"{\"ask\":\"ping\"}"}
+                ]
+                txt = client_tmp._generate_text(test_msgs, max_new_tokens=32)
+                st.sidebar.success("생성 호출 OK")
+                st.sidebar.code((txt[:300] + "...") if len(txt) > 300 else txt)
+            else:
+                st.sidebar.error("모델 조회 실패: 권한/ID 확인")
     except Exception as e:
         st.sidebar.error(f"헬스체크 실패: {e}")
+        st.sidebar.caption(traceback.format_exc(limit=2))
 
 if st.sidebar.button("진행 초기화"):
     for k in ["round_idx","log","score_hist","prev_trust","last_out"]:
@@ -438,7 +486,7 @@ if use_llm:
     try:
         client = DNAClient(backend=backend, model_id=model_id, hf_token=hf_token, endpoint_url=endpoint, temperature=temperature)
     except Exception as e:
-        st.sidebar.error(f"DNA‑R1 초기화 실패: {e}")
+        st.sidebar.error(f"LLM 초기화 실패: {e}")
         client = None
 
 # ==================== Header ====================
@@ -477,7 +525,7 @@ else:
         computed = compute_metrics(scn, decision, weights, align, st.session_state.prev_trust)
         m = computed["metrics"]
 
-        # DNA‑R1 내러티브
+        # LLM 내러티브
         try:
             if client:
                 nar = dna_narrative(client, scn, decision, m, weights)
@@ -485,7 +533,7 @@ else:
                 nar = fallback_narrative(scn, decision, m, weights)
         except Exception as e:
             import traceback
-            st.warning(f"DNA‑R1 생성 실패(폴백 사용): {e}")
+            st.warning(f"LLM 생성 실패(폴백 사용): {e}")
             st.caption(traceback.format_exc(limit=2))
             nar = fallback_narrative(scn, decision, m, weights)
 
@@ -499,7 +547,6 @@ else:
         mc2.metric("윤리 일관성", f"{int(100*m['ethical_consistency'])}%")
         mc3.metric("AI 신뢰지표", f"{m['ai_trust_score']:.1f}")
 
-        # Streamlit의 progress는 0~100 정수 권장
         prog1, prog2, prog3 = st.columns(3)
         with prog1:
             st.caption("시민 감정")
