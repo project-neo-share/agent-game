@@ -126,7 +126,7 @@ class DNAClient:
             return text
 
         # 기본: hf-api (서버리스 Inference API)
-        url = f"https://api-inference.huggingface.co/models/{self.model_id}"
+        url = f"https://huggingface.co/api/models/{self.model_id}"
         payload = {
             "inputs": prompt,
             "parameters": {
