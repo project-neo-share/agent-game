@@ -1,4 +1,4 @@
-# app.py — Ethical Crossroads (DNA 2.0 ready)
+# app.py — Ethical Crossroads (DNA 2.0 ready, OpenAI-compatible, API-KEY header)
 # author: Prof. Songhee Kang
 # AIM 2025, Fall. TU Korea
 
@@ -41,7 +41,7 @@ def get_secret(k: str, default: str=""):
     except Exception:
         return os.getenv(k, default)
 
-# ==================== DNA Client (openai / hf-api / tgi / local) ====================
+# ==================== Chat Template for DNA-family (hf-api/tgi) ====================
 def _render_chat_template_str(messages: List[Dict[str,str]]) -> str:
     """DNA 계열(<|im_start|> …) 템플릿. (hf-api/tgi에서 사용)"""
     def block(role, content): return f"<|im_start|>{role}<|im_sep|>{content}<|im_end|>"
@@ -57,6 +57,7 @@ def _render_chat_template_str(messages: List[Dict[str,str]]) -> str:
 class DNAHTTPError(Exception):
     pass
 
+# ==================== DNA Client (openai / hf-api / tgi / local) ====================
 class DNAClient:
     """
     backend:
@@ -67,17 +68,22 @@ class DNAClient:
     """
     def __init__(self,
                  backend: str = "openai",
+                 # 🔽 기본 모델명: 최신 확인값(별칭). 필요 시 절대경로로 교체 가능
                  model_id: str = "dnotitia/DNA-2.0-30B-A3N",
                  api_key: Optional[str] = None,
                  endpoint_url: Optional[str] = None,
                  api_key_header: str = "API-KEY",
-                 temperature: float = 0.7):
+                 temperature: float = 0.7,
+                 max_tokens: int = 16000,
+                 use_stream: bool = False):
         self.backend = backend
         self.model_id = model_id
         self.api_key = api_key or get_secret("HF_TOKEN") or get_secret("HUGGINGFACEHUB_API_TOKEN")
         self.endpoint_url = endpoint_url or get_secret("DNA_R1_ENDPOINT", "http://210.93.49.11:8081/v1")
-        self.temperature = temperature
+        self.temperature = float(temperature)
         self.api_key_header = api_key_header  # "API-KEY" | "Authorization: Bearer" | "x-api-key"
+        self.max_tokens = int(max_tokens)
+        self.use_stream = bool(use_stream)
 
         self._tok = None
         self._model = None
@@ -102,7 +108,7 @@ class DNAClient:
         if hk.startswith("authorization"):
             h["Authorization"] = f"Bearer {self.api_key}"
         elif hk in {"api-key", "x-api-key"}:
-            # 서버가 'API-KEY' 정확 표기를 요구 → 대소문자 유지해 보냄
+            # 서버 사양: 'API-KEY' 헤더명 그대로 요구
             h["API-KEY"] = self.api_key
         else:
             # 안전 기본값
@@ -117,7 +123,9 @@ class DNAClient:
                | retry_if_exception_type(httpx.RemoteProtocolError)),
         reraise=True
     )
-    def _generate_text(self, messages: List[Dict[str,str]], max_new_tokens: int = 600) -> str:
+    def _generate_text(self, messages: List[Dict[str,str]], max_new_tokens: Optional[int] = None) -> str:
+        max_new_tokens = int(max_new_tokens if max_new_tokens is not None else self.max_tokens)
+
         # ---------- LOCAL ----------
         if self.backend == "local":
             if not self._local_ready:
@@ -142,19 +150,25 @@ class DNAClient:
                 raise RuntimeError("OpenAI 호환 endpoint_url 필요 (예: http://210.93.49.11:8081/v1)")
             url = self.endpoint_url.rstrip("/") + "/chat/completions"
             headers = self._auth_headers()
+
+            # NOTE: 서버 스키마 예시 준수 (messages/user-only도 허용)
             payload = {
-                "messages": messages,
-                "temperature": self.temperature,
-                "max_tokens": max_new_tokens,
-                "stream": False
+                "messages": messages,                       # [{"role": "...", "content": "..."}]
+                "temperature": float(self.temperature),
+                "max_tokens": int(max_new_tokens),
+                "stream": bool(self.use_stream)
             }
             if self.model_id:
-                payload["model"] = self.model_id
+                payload["model"] = self.model_id            # 절대경로/별칭 모두 허용
+
             r = httpx.post(url, json=payload, headers=headers, timeout=HTTPX_TIMEOUT)
             try:
                 r.raise_for_status()
             except httpx.HTTPStatusError as e:
                 raise DNAHTTPError(f"OPENAI {r.status_code}: {r.text}") from e
+
+            # ⚠️ 스트리밍 모드(True)일 경우 SSE 파싱이 필요하지만,
+            #    본 앱은 간결성을 위해 비스트리밍 응답만 처리합니다.
             data = r.json()
             return data["choices"][0]["message"]["content"]
 
@@ -174,7 +188,7 @@ class DNAClient:
                     "stop": ["<|im_end|>"],
                     "return_full_text": False
                 },
-                "stream": False
+                "stream": False  # TGI 스트리밍 미사용
             }
             r = httpx.post(url, json=payload, headers=headers, timeout=HTTPX_TIMEOUT)
             try:
@@ -222,7 +236,7 @@ class DNAClient:
             raise DNAHTTPError(f"HF-API error: {data['error']}")
         return str(data)
 
-    def chat_json(self, messages: List[Dict[str,str]], max_new_tokens: int = 600) -> Dict[str, Any]:
+    def chat_json(self, messages: List[Dict[str,str]], max_new_tokens: Optional[int] = None) -> Dict[str, Any]:
         text = self._generate_text(messages, max_new_tokens=max_new_tokens)
         return coerce_json(text)
 
@@ -412,7 +426,7 @@ def build_narrative_messages(scn: Scenario, choice: str, metrics: Dict[str, Any]
 
 def dna_narrative(client: DNAClient, scn: Scenario, choice: str, metrics: Dict[str, Any], weights: Dict[str, float]) -> Dict[str,str]:
     messages = build_narrative_messages(scn, choice, metrics, weights)
-    return client.chat_json(messages, max_new_tokens=500)
+    return client.chat_json(messages, max_new_tokens=client.max_tokens)
 
 def fallback_narrative(scn: Scenario, choice: str, metrics: Dict[str, Any], weights: Dict[str, float]) -> Dict[str, str]:
     pro = "다수의 위해를 줄였다" if choice=="A" else "의도적 위해를 피했다"
@@ -463,11 +477,19 @@ use_llm = st.sidebar.checkbox("LLM 사용(내러티브 생성)", value=True)
 backend = st.sidebar.selectbox("백엔드", ["openai","hf-api","tgi","local"], index=0)
 temperature = st.sidebar.slider("창의성(temperature)", 0.0, 1.5, 0.7, 0.1)
 
-# API/엔드포인트/모델/헤더
+# API/엔드포인트/모델/헤더/토큰/스트림
 endpoint = st.sidebar.text_input("엔드포인트(OpenAI/TGI)", value=get_secret("DNA_R1_ENDPOINT","http://210.93.49.11:8081/v1"))
 api_key = st.sidebar.text_input("API 키", value=get_secret("HF_TOKEN",""), type="password")
 api_key_header = st.sidebar.selectbox("API 키 헤더", ["API-KEY","Authorization: Bearer","x-api-key"], index=0)
-model_id = st.sidebar.text_input("모델 ID", value=get_secret("DNA_R1_MODEL_ID","dnotitia/DNA-2.0-30B-A3N"))
+
+# 🔽 모델 ID: (1) 별칭 dnotitia/DNA-2.0-30B-A3N  (2) 서버가 절대경로 요구 시 그 경로 입력
+model_id = st.sidebar.text_input(
+    "모델 ID(별칭 또는 절대경로)",
+    value=get_secret("DNA_R1_MODEL_ID","dnotitia/DNA-2.0-30B-A3N")
+)
+
+use_stream = st.sidebar.checkbox("stream 모드(SSE 미파싱, 비권장)", value=False)
+max_tokens = st.sidebar.number_input("max_tokens", min_value=1, max_value=64000, value=16000, step=512)
 
 # 헬스체크
 if st.sidebar.button("🔎 헬스체크"):
@@ -483,14 +505,13 @@ if st.sidebar.button("🔎 헬스체크"):
                     headers["API-KEY"] = api_key
             payload = {
                 "messages": [
-                    {"role":"system","content":"오직 JSON만. 키: msg"},
                     {"role":"user","content":"{\"ask\":\"ping\"}"}
                 ],
-                "max_tokens": 16,
-                "stream": False
+                "temperature": float(temperature),
+                "max_tokens": int(max_tokens),
+                "stream": bool(use_stream)
             }
             if model_id: payload["model"] = model_id
-            # 디버그용: 어떤 헤더 키가 나가는지 표시(값은 미표시)
             st.sidebar.write("headers keys:", list(headers.keys()))
             r = httpx.post(url, json=payload, headers=headers, timeout=HTTPX_TIMEOUT)
             st.sidebar.write(f"OPENAI {r.status_code}")
@@ -502,9 +523,10 @@ if st.sidebar.button("🔎 헬스체크"):
             r_info = httpx.get(info_url, headers=headers, timeout=HTTPX_TIMEOUT)
             st.sidebar.write(f"MODEL INFO {r_info.status_code}")
             gen_url = f"https://api-inference.huggingface.co/models/{model_id}"
+            prompt = "<|im_start|>user<|im_sep|>{\"ask\":\"ping\"}<|im_end|>\n<|im_start|>assistant<|im_sep|>"
             payload = {
-                "inputs": "<|im_start|>user<|im_sep|>{\"ask\":\"ping\"}<|im_end|>\n<|im_start|>assistant<|im_sep|>",
-                "parameters": {"max_new_tokens": 16, "return_full_text": False, "stop_sequences": ["<|im_end|>"]},
+                "inputs": prompt,
+                "parameters": {"max_new_tokens": 32, "return_full_text": False, "stop_sequences": ["<|im_end|>"]},
                 "options": {"wait_for_model": True}
             }
             r = httpx.post(gen_url, json=payload, headers=headers, timeout=HTTPX_TIMEOUT)
@@ -517,9 +539,10 @@ if st.sidebar.button("🔎 헬스체크"):
         elif backend == "tgi":
             url = endpoint.rstrip("/") + "/generate"
             headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+            prompt = "<|im_start|>user<|im_sep|>{\"ask\":\"ping\"}<|im_end|>\n<|im_start|>assistant<|im_sep|>"
             payload = {
-                "inputs": "<|im_start|>user<|im_sep|>{\"ask\":\"ping\"}<|im_end|>\n<|im_start|>assistant<|im_sep|>",
-                "parameters": {"max_new_tokens": 16, "temperature": 0.7, "top_p": 0.9, "stop": ["<|im_end|>"], "return_full_text": False},
+                "inputs": prompt,
+                "parameters": {"max_new_tokens": 32, "temperature": float(temperature), "top_p": 0.9, "stop": ["<|im_end|>"], "return_full_text": False},
                 "stream": False
             }
             r = httpx.post(url, json=payload, headers=headers, timeout=HTTPX_TIMEOUT)
@@ -548,7 +571,9 @@ if use_llm:
             api_key=api_key,
             endpoint_url=endpoint,
             api_key_header=api_key_header,
-            temperature=temperature
+            temperature=temperature,
+            max_tokens=max_tokens,
+            use_stream=use_stream
         )
     except Exception as e:
         st.sidebar.error(f"LLM 초기화 실패: {e}")
@@ -567,6 +592,8 @@ class LogRow:
     title: str
     mode: str
     choice: str
+
+# (시나리오 정의는 위 SCENARIOS 리스트)
 
 idx = st.session_state.round_idx
 if idx >= len(SCENARIOS):
@@ -602,6 +629,7 @@ else:
         # LLM 내러티브
         try:
             if client:
+                # 시스템+유저 메시지 그대로 전달(서버가 user-only를 강제하면 여기서 합쳐도 됨)
                 nar = dna_narrative(client, scn, decision, m, weights)
             else:
                 nar = fallback_narrative(scn, decision, m, weights)
@@ -653,6 +681,7 @@ else:
             **{k: v for k,v in m.items()}
         }
         st.session_state.log.append(row)
+
         st.session_state.score_hist.append(m["ai_trust_score"])
         st.session_state.prev_trust = clamp(0.6*st.session_state.prev_trust + 0.4*m["social_trust"], 0, 1)
 
