@@ -1,4 +1,4 @@
-# app.py — Ethical Crossroads (DNA 2.0 ready, OpenAI-compatible, API-KEY header)
+# app.py — Ethical Crossroads (OpenAI-compatible, API-KEY header, user-only payload)
 # author: Prof. Songhee Kang
 # AIM 2025, Fall. TU Korea
 
@@ -41,9 +41,9 @@ def get_secret(k: str, default: str=""):
     except Exception:
         return os.getenv(k, default)
 
-# ==================== Chat Template for DNA-family (hf-api/tgi) ====================
+# ==================== (hf-api/tgi 용) DNA-family chat template ====================
 def _render_chat_template_str(messages: List[Dict[str,str]]) -> str:
-    """DNA 계열(<|im_start|> …) 템플릿. (hf-api/tgi에서 사용)"""
+    """DNA 계열(<|im_start|> …) 템플릿. (hf-api/tgi 호출 시 사용)"""
     def block(role, content): return f"<|im_start|>{role}<|im_sep|>{content}<|im_end|>"
     sys = ""
     rest = []
@@ -57,19 +57,19 @@ def _render_chat_template_str(messages: List[Dict[str,str]]) -> str:
 class DNAHTTPError(Exception):
     pass
 
-# ==================== DNA Client (openai / hf-api / tgi / local) ====================
+# ==================== LLM Client (openai / hf-api / tgi / local) ====================
 class DNAClient:
     """
     backend:
       - 'openai': OpenAI 호환 Chat Completions (예: http://210.93.49.11:8081/v1)
-      - 'hf-api': Hugging Face Inference API (서버리스)  ← 일부 DNA 모델은 404일 수 있음
+      - 'hf-api': Hugging Face Inference API (서버리스)
       - 'tgi'    : Text Generation Inference (HF Inference Endpoints 등)
       - 'local'  : 로컬 Transformers 로딩 (GPU 권장)
     """
     def __init__(self,
                  backend: str = "openai",
-                 # 🔽 기본 모델명: 최신 확인값(별칭). 필요 시 절대경로로 교체 가능
-                 model_id: str = "dnotitia/DNA-2.0-30B-A3N",
+                 # 🔽 기본 모델명(절대경로). 서버 허용 모델 경로를 그대로 사용
+                 model_id: str = "/root/vllm/models/Qwen3-Coder-30B-A3B-Instruct-FP8",
                  api_key: Optional[str] = None,
                  endpoint_url: Optional[str] = None,
                  api_key_header: str = "API-KEY",
@@ -99,20 +99,17 @@ class DNAClient:
                 raise RuntimeError(f"로컬 모델 로드 실패: {e}")
 
     def _auth_headers(self) -> Dict[str,str]:
-        """사이드바에서 선택한 헤더 타입대로 API 키를 붙인다."""
+        """API 키 헤더. 프록시/백엔드 호환 위해 3종 동시 전송."""
         h = {"Content-Type":"application/json"}
         if not self.api_key:
             return h
-
-        hk = self.api_key_header.strip().lower()
-        if hk.startswith("authorization"):
-            h["Authorization"] = f"Bearer {self.api_key}"
-        elif hk in {"api-key", "x-api-key"}:
-            # 서버 사양: 'API-KEY' 헤더명 그대로 요구
-            h["API-KEY"] = self.api_key
-        else:
-            # 안전 기본값
-            h["Authorization"] = f"Bearer {self.api_key}"
+        # 동시에 3종 붙여 프록시 변환/필터링 이슈 우회
+        h["API-KEY"] = self.api_key
+        h["Api-Key"] = self.api_key
+        h["X-API-Key"] = self.api_key
+        # Authorization 헤더도 함께 보낼 수 있음(원하면 주석 해제)
+        # if self.api_key_header.lower().startswith("authorization"):
+        #     h["Authorization"] = f"Bearer {self.api_key}"
         return h
 
     @retry(
@@ -151,15 +148,25 @@ class DNAClient:
             url = self.endpoint_url.rstrip("/") + "/chat/completions"
             headers = self._auth_headers()
 
-            # NOTE: 서버 스키마 예시 준수 (messages/user-only도 허용)
+            # 서버 스키마 정합: messages는 user-only로 보내는 것이 안전
+            user_only: List[Dict[str,str]] = []
+            for m in messages:
+                if m.get("role") == "user":
+                    user_only.append({"role":"user","content": m.get("content","")})
+                elif m.get("role") == "system":
+                    # system 내용을 user 앞에 합쳐서 삽입(필요 시)
+                    if m.get("content","").strip():
+                        user_only.insert(0, {"role":"user","content": m["content"]})
+            if not user_only and messages:
+                user_only = [{"role":"user","content": messages[-1].get("content","")}]
+
             payload = {
-                "messages": messages,                       # [{"role": "...", "content": "..."}]
-                "temperature": float(self.temperature),
-                "max_tokens": int(max_new_tokens),
-                "stream": bool(self.use_stream)
+                "model": self.model_id,                     # 절대경로 모델명
+                "messages": user_only,                      # user-only
+                "max_tokens": max_new_tokens,
+                "temperature": self.temperature,
+                "stream": bool(self.use_stream)             # SSE 파싱 미구현 → False 권장
             }
-            if self.model_id:
-                payload["model"] = self.model_id            # 절대경로/별칭 모두 허용
 
             r = httpx.post(url, json=payload, headers=headers, timeout=HTTPX_TIMEOUT)
             try:
@@ -167,8 +174,7 @@ class DNAClient:
             except httpx.HTTPStatusError as e:
                 raise DNAHTTPError(f"OPENAI {r.status_code}: {r.text}") from e
 
-            # ⚠️ 스트리밍 모드(True)일 경우 SSE 파싱이 필요하지만,
-            #    본 앱은 간결성을 위해 비스트리밍 응답만 처리합니다.
+            # ⚠️ stream=True인 경우 SSE 파싱이 필요. 본 앱은 단순화 위해 비스트리밍만 처리.
             data = r.json()
             return data["choices"][0]["message"]["content"]
 
@@ -188,7 +194,7 @@ class DNAClient:
                     "stop": ["<|im_end|>"],
                     "return_full_text": False
                 },
-                "stream": False  # TGI 스트리밍 미사용
+                "stream": False
             }
             r = httpx.post(url, json=payload, headers=headers, timeout=HTTPX_TIMEOUT)
             try:
@@ -200,7 +206,6 @@ class DNAClient:
                     if isinstance(data, dict) else data[0].get("generated_text", ""))
 
         # ---------- HF-API ----------
-        # 주의: 일부 모델은 서버리스 추론 비활성(404)일 수 있음
         prompt = _render_chat_template_str(messages)
         url = f"https://api-inference.huggingface.co/models/{self.model_id}"
         headers = self._auth_headers()
@@ -213,10 +218,7 @@ class DNAClient:
                 "return_full_text": False,
                 "stop_sequences": ["<|im_end|>"]
             },
-            "options": {
-                "wait_for_model": True,
-                "use_cache": True
-            }
+            "options": {"wait_for_model": True, "use_cache": True}
         }
         r = httpx.post(url, json=payload, headers=headers, timeout=HTTPX_TIMEOUT)
         try:
@@ -224,8 +226,8 @@ class DNAClient:
         except httpx.HTTPStatusError as e:
             if r.status_code == 404:
                 raise DNAHTTPError(
-                    "HF-API 404: 이 모델이 서버리스 Inference API에서 비활성 상태일 수 있습니다. "
-                    "백엔드를 'tgi'(Endpoint 필요) 또는 'openai'(교내 서버)로 전환하거나, 'local'(GPU) 모드를 사용하세요."
+                    "HF-API 404: 이 모델은 서버리스 Inference API에서 비활성일 수 있습니다. "
+                    "백엔드를 'tgi' 또는 'openai'로 전환하거나, 'local'(GPU) 모드를 사용하세요."
                 ) from e
             raise DNAHTTPError(f"HF-API {r.status_code}: {r.text}") from e
 
@@ -425,6 +427,7 @@ def build_narrative_messages(scn: Scenario, choice: str, metrics: Dict[str, Any]
     ]
 
 def dna_narrative(client: DNAClient, scn: Scenario, choice: str, metrics: Dict[str, Any], weights: Dict[str, float]) -> Dict[str,str]:
+    # 본문 호출은 user-only 스펙을 만족시키기 위해 messages를 여기서 한 건으로 합쳐도 됨
     messages = build_narrative_messages(scn, choice, metrics, weights)
     return client.chat_json(messages, max_new_tokens=client.max_tokens)
 
@@ -477,21 +480,21 @@ use_llm = st.sidebar.checkbox("LLM 사용(내러티브 생성)", value=True)
 backend = st.sidebar.selectbox("백엔드", ["openai","hf-api","tgi","local"], index=0)
 temperature = st.sidebar.slider("창의성(temperature)", 0.0, 1.5, 0.7, 0.1)
 
-# API/엔드포인트/모델/헤더/토큰/스트림
+# API/엔드포인트/헤더/토큰/스트림
 endpoint = st.sidebar.text_input("엔드포인트(OpenAI/TGI)", value=get_secret("DNA_R1_ENDPOINT","http://210.93.49.11:8081/v1"))
 api_key = st.sidebar.text_input("API 키", value=get_secret("HF_TOKEN",""), type="password")
-api_key_header = st.sidebar.selectbox("API 키 헤더", ["API-KEY","Authorization: Bearer","x-api-key"], index=0)
+api_key_header = st.sidebar.selectbox("API 키 헤더(표시용)", ["API-KEY","Authorization: Bearer","x-api-key"], index=0)
 
-# 🔽 모델 ID: (1) 별칭 dnotitia/DNA-2.0-30B-A3N  (2) 서버가 절대경로 요구 시 그 경로 입력
+# 모델 ID: 절대경로(기본) 또는 별칭 입력
 model_id = st.sidebar.text_input(
-    "모델 ID(별칭 또는 절대경로)",
-    value=get_secret("DNA_R1_MODEL_ID","dnotitia/DNA-2.0-30B-A3N")
+    "모델 ID(절대경로 또는 별칭)",
+    value=get_secret("DNA_R1_MODEL_ID","/root/vllm/models/Qwen3-Coder-30B-A3B-Instruct-FP8")
 )
 
 use_stream = st.sidebar.checkbox("stream 모드(SSE 미파싱, 비권장)", value=False)
 max_tokens = st.sidebar.number_input("max_tokens", min_value=1, max_value=64000, value=16000, step=512)
 
-# 헬스체크
+# 헬스체크 (openai 경로: user-only + 절대경로 모델 + 3헤더 동시 전송)
 if st.sidebar.button("🔎 헬스체크"):
     import traceback
     try:
@@ -499,19 +502,18 @@ if st.sidebar.button("🔎 헬스체크"):
             url = endpoint.rstrip("/") + "/chat/completions"
             headers = {"Content-Type":"application/json"}
             if api_key:
-                if api_key_header.lower().startswith("authorization"):
-                    headers["Authorization"] = f"Bearer {api_key}"
-                elif api_key_header.strip().lower() in {"api-key","x-api-key"}:
-                    headers["API-KEY"] = api_key
+                headers.update({
+                    "API-KEY": api_key,
+                    "Api-Key": api_key,
+                    "X-API-Key": api_key
+                })
             payload = {
-                "messages": [
-                    {"role":"user","content":"{\"ask\":\"ping\"}"}
-                ],
-                "temperature": float(temperature),
+                "model": model_id,
+                "messages": [{"role":"user","content":"{\"ask\":\"ping\"}"}],
                 "max_tokens": int(max_tokens),
+                "temperature": float(temperature),
                 "stream": bool(use_stream)
             }
-            if model_id: payload["model"] = model_id
             st.sidebar.write("headers keys:", list(headers.keys()))
             r = httpx.post(url, json=payload, headers=headers, timeout=HTTPX_TIMEOUT)
             st.sidebar.write(f"OPENAI {r.status_code}")
@@ -593,8 +595,6 @@ class LogRow:
     mode: str
     choice: str
 
-# (시나리오 정의는 위 SCENARIOS 리스트)
-
 idx = st.session_state.round_idx
 if idx >= len(SCENARIOS):
     st.success("모든 단계를 완료했습니다. 사이드바에서 로그를 다운로드하거나 초기화하세요.")
@@ -629,7 +629,6 @@ else:
         # LLM 내러티브
         try:
             if client:
-                # 시스템+유저 메시지 그대로 전달(서버가 user-only를 강제하면 여기서 합쳐도 됨)
                 nar = dna_narrative(client, scn, decision, m, weights)
             else:
                 nar = fallback_narrative(scn, decision, m, weights)
