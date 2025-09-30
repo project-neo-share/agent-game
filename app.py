@@ -13,7 +13,7 @@ from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_excep
 # ==================== App Config ====================
 st.set_page_config(page_title="윤리적 전환 (Ethical Crossroads)", page_icon="🧭", layout="centered")
 
-# ==================== Global Timeout (FIX) ====================
+# ==================== Global Timeout ====================
 HTTPX_TIMEOUT = httpx.Timeout(
     connect=15.0,   # TCP 연결
     read=180.0,     # 응답 읽기
@@ -61,13 +61,13 @@ class DNAClient:
     """
     backend:
       - 'openai': OpenAI 호환 Chat Completions (예: http://210.93.49.11:8081/v1)
-      - 'hf-api': Hugging Face Inference API (서버리스)  ← dnotitia/DNA-2.0-14B는 404일 수 있음
+      - 'hf-api': Hugging Face Inference API (서버리스)  ← 일부 DNA 모델은 404일 수 있음
       - 'tgi'    : Text Generation Inference (HF Inference Endpoints 등)
       - 'local'  : 로컬 Transformers 로딩 (GPU 권장)
     """
     def __init__(self,
                  backend: str = "openai",
-                 model_id: str = "dnotitia/DNA-2.0-30B-A3B",
+                 model_id: str = "dnotitia/DNA-2.0-30B-A3N",
                  api_key: Optional[str] = None,
                  endpoint_url: Optional[str] = None,
                  api_key_header: str = "API-KEY",
@@ -77,7 +77,7 @@ class DNAClient:
         self.api_key = api_key or get_secret("HF_TOKEN") or get_secret("HUGGINGFACEHUB_API_TOKEN")
         self.endpoint_url = endpoint_url or get_secret("DNA_R1_ENDPOINT", "http://210.93.49.11:8081/v1")
         self.temperature = temperature
-        self.api_key_header = api_key_header  # "Authorization: Bearer" | "API-KEY" |
+        self.api_key_header = api_key_header  # "API-KEY" | "Authorization: Bearer" | "x-api-key"
 
         self._tok = None
         self._model = None
@@ -93,17 +93,19 @@ class DNAClient:
                 raise RuntimeError(f"로컬 모델 로드 실패: {e}")
 
     def _auth_headers(self) -> Dict[str,str]:
+        """사이드바에서 선택한 헤더 타입대로 API 키를 붙인다."""
         h = {"Content-Type":"application/json"}
         if not self.api_key:
             return h
-        hk = self.api_key_header.lower()
+
+        hk = self.api_key_header.strip().lower()
         if hk.startswith("authorization"):
             h["Authorization"] = f"Bearer {self.api_key}"
-        elif hk == "x-api-key":
-            h["X-API-Key"] = self.api_key
-        elif hk == "API-KEY":
+        elif hk in {"api-key", "x-api-key"}:
+            # 서버가 'API-KEY' 정확 표기를 요구 → 대소문자 유지해 보냄
             h["API-KEY"] = self.api_key
         else:
+            # 안전 기본값
             h["Authorization"] = f"Bearer {self.api_key}"
         return h
 
@@ -184,7 +186,7 @@ class DNAClient:
                     if isinstance(data, dict) else data[0].get("generated_text", ""))
 
         # ---------- HF-API ----------
-        # 주의: dnotitia/DNA-2.0-14B는 서버리스 추론이 비활성(404)일 수 있음
+        # 주의: 일부 모델은 서버리스 추론 비활성(404)일 수 있음
         prompt = _render_chat_template_str(messages)
         url = f"https://api-inference.huggingface.co/models/{self.model_id}"
         headers = self._auth_headers()
@@ -463,9 +465,9 @@ temperature = st.sidebar.slider("창의성(temperature)", 0.0, 1.5, 0.7, 0.1)
 
 # API/엔드포인트/모델/헤더
 endpoint = st.sidebar.text_input("엔드포인트(OpenAI/TGI)", value=get_secret("DNA_R1_ENDPOINT","http://210.93.49.11:8081/v1"))
-api_key = st.sidebar.text_input("API 키(HF_TOKEN 또는 내부 키)", value=get_secret("HF_TOKEN",""), type="password")
-api_key_header = st.sidebar.selectbox("API 키 헤더", ["Authorization: Bearer","API-KEY","x-api-key"], index=0)
-model_id = st.sidebar.text_input("모델 ID", value=get_secret("DNA_R1_MODEL_ID","dnotitia/DNA-2.0-30B-A3B"))
+api_key = st.sidebar.text_input("API 키", value=get_secret("HF_TOKEN",""), type="password")
+api_key_header = st.sidebar.selectbox("API 키 헤더", ["API-KEY","Authorization: Bearer","x-api-key"], index=0)
+model_id = st.sidebar.text_input("모델 ID", value=get_secret("DNA_R1_MODEL_ID","dnotitia/DNA-2.0-30B-A3N"))
 
 # 헬스체크
 if st.sidebar.button("🔎 헬스체크"):
@@ -477,7 +479,7 @@ if st.sidebar.button("🔎 헬스체크"):
             if api_key:
                 if api_key_header.lower().startswith("authorization"):
                     headers["Authorization"] = f"Bearer {api_key}"
-                elif "API-KEY" in api_key_header:
+                elif api_key_header.strip().lower() in {"api-key","x-api-key"}:
                     headers["API-KEY"] = api_key
             payload = {
                 "messages": [
@@ -488,6 +490,8 @@ if st.sidebar.button("🔎 헬스체크"):
                 "stream": False
             }
             if model_id: payload["model"] = model_id
+            # 디버그용: 어떤 헤더 키가 나가는지 표시(값은 미표시)
+            st.sidebar.write("headers keys:", list(headers.keys()))
             r = httpx.post(url, json=payload, headers=headers, timeout=HTTPX_TIMEOUT)
             st.sidebar.write(f"OPENAI {r.status_code}")
             st.sidebar.code((r.text[:500] + "...") if len(r.text)>500 else r.text)
