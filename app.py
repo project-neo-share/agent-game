@@ -1,5 +1,8 @@
-# app.py
-import os, json, math, random, csv, io, datetime as dt, re
+# app.py — Ethical Crossroads (DNA 2.0 ready)
+# author: Prof. Songhee Kang
+# AIM 2025, Fall. TU Korea
+
+import os, json, math, csv, io, datetime as dt, re
 from dataclasses import dataclass
 from typing import Dict, Any, List, Tuple, Optional
 
@@ -9,6 +12,14 @@ from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_excep
 
 # ==================== App Config ====================
 st.set_page_config(page_title="윤리적 전환 (Ethical Crossroads)", page_icon="🧭", layout="centered")
+
+# ==================== Global Timeout ====================
+HTTPX_TIMEOUT = httpx.Timeout(
+    connect=15.0,   # TCP 연결
+    read=180.0,     # 응답 읽기
+    write=30.0,     # 요청 쓰기
+    pool=15.0       # 커넥션 풀 대기
+)
 
 # ==================== Utils ====================
 def clamp(x: float, lo: float, hi: float) -> float:
@@ -30,9 +41,9 @@ def get_secret(k: str, default: str=""):
     except Exception:
         return os.getenv(k, default)
 
-# ==================== DNA-R1/2.x Client ====================
+# ==================== DNA Client (openai / hf-api / tgi / local) ====================
 def _render_chat_template_str(messages: List[Dict[str,str]]) -> str:
-    """DNA 계열 모델용 (<|im_start|> …) 템플릿. (hf-api/tgi에서 사용)"""
+    """DNA 계열(<|im_start|> …) 템플릿. (hf-api/tgi에서 사용)"""
     def block(role, content): return f"<|im_start|>{role}<|im_sep|>{content}<|im_end|>"
     sys = ""
     rest = []
@@ -50,24 +61,23 @@ class DNAClient:
     """
     backend:
       - 'openai': OpenAI 호환 Chat Completions (예: http://210.93.49.11:8081/v1)
-      - 'hf-api': Hugging Face Inference API (서버리스)  ← DNA-2.0-14B는 404일 수 있음
-      - 'tgi'    : Text Generation Inference (Inference Endpoints 등)
+      - 'hf-api': Hugging Face Inference API (서버리스)  ← 일부 DNA 모델은 404일 수 있음
+      - 'tgi'    : Text Generation Inference (HF Inference Endpoints 등)
       - 'local'  : 로컬 Transformers 로딩 (GPU 권장)
     """
     def __init__(self,
                  backend: str = "openai",
-                 model_id: str = "dnotitia/DNA-2.0-14B",
+                 model_id: str = "dnotitia/DNA-2.0-30B-A3N",
                  api_key: Optional[str] = None,
                  endpoint_url: Optional[str] = None,
-                 api_key_header: str = "Authorization: Bearer",
+                 api_key_header: str = "API-KEY",
                  temperature: float = 0.7):
         self.backend = backend
         self.model_id = model_id
-        # api_key: HF_TOKEN 혹은 교내 서버 키
         self.api_key = api_key or get_secret("HF_TOKEN") or get_secret("HUGGINGFACEHUB_API_TOKEN")
         self.endpoint_url = endpoint_url or get_secret("DNA_R1_ENDPOINT", "http://210.93.49.11:8081/v1")
         self.temperature = temperature
-        self.api_key_header = api_key_header  # "Authorization: Bearer", "X-API-Key", "x-api-key"
+        self.api_key_header = api_key_header  # "API-KEY" | "Authorization: Bearer" | "x-api-key"
 
         self._tok = None
         self._model = None
@@ -83,17 +93,19 @@ class DNAClient:
                 raise RuntimeError(f"로컬 모델 로드 실패: {e}")
 
     def _auth_headers(self) -> Dict[str,str]:
+        """사이드바에서 선택한 헤더 타입대로 API 키를 붙인다."""
         h = {"Content-Type":"application/json"}
         if not self.api_key:
             return h
-        hk = self.api_key_header.lower()
+
+        hk = self.api_key_header.strip().lower()
         if hk.startswith("authorization"):
             h["Authorization"] = f"Bearer {self.api_key}"
-        elif hk == "x-api-key":
-            h["X-API-Key"] = self.api_key
-        elif hk == "x-api-key (lower)":
-            h["x-api-key"] = self.api_key
+        elif hk in {"api-key", "x-api-key"}:
+            # 서버가 'API-KEY' 정확 표기를 요구 → 대소문자 유지해 보냄
+            h["API-KEY"] = self.api_key
         else:
+            # 안전 기본값
             h["Authorization"] = f"Bearer {self.api_key}"
         return h
 
@@ -124,8 +136,6 @@ class DNAClient:
             )
             return self._tok.decode(gen[0][inputs.shape[-1]:], skip_special_tokens=True)
 
-        timeout = httpx.Timeout(connect=15.0, read=180.0)
-
         # ---------- OPENAI-COMPAT ----------
         if self.backend == "openai":
             if not self.endpoint_url:
@@ -138,10 +148,9 @@ class DNAClient:
                 "max_tokens": max_new_tokens,
                 "stream": False
             }
-            # 서버가 model 필수면 추가
             if self.model_id:
                 payload["model"] = self.model_id
-            r = httpx.post(url, json=payload, headers=headers, timeout=timeout)
+            r = httpx.post(url, json=payload, headers=headers, timeout=HTTPX_TIMEOUT)
             try:
                 r.raise_for_status()
             except httpx.HTTPStatusError as e:
@@ -167,7 +176,7 @@ class DNAClient:
                 },
                 "stream": False
             }
-            r = httpx.post(url, json=payload, headers=headers, timeout=timeout)
+            r = httpx.post(url, json=payload, headers=headers, timeout=HTTPX_TIMEOUT)
             try:
                 r.raise_for_status()
             except httpx.HTTPStatusError as e:
@@ -177,11 +186,10 @@ class DNAClient:
                     if isinstance(data, dict) else data[0].get("generated_text", ""))
 
         # ---------- HF-API ----------
-        # 주의: DNA-2.0-14B는 서버리스 추론이 비활성화되어 404가 날 수 있음
+        # 주의: 일부 모델은 서버리스 추론 비활성(404)일 수 있음
         prompt = _render_chat_template_str(messages)
         url = f"https://api-inference.huggingface.co/models/{self.model_id}"
         headers = self._auth_headers()
-        # HF 서버리스 권장 파라미터
         payload = {
             "inputs": prompt,
             "parameters": {
@@ -196,15 +204,14 @@ class DNAClient:
                 "use_cache": True
             }
         }
-        r = httpx.post(url, json=payload, headers=headers, timeout=timeout)
+        r = httpx.post(url, json=payload, headers=headers, timeout=HTTPX_TIMEOUT)
         try:
             r.raise_for_status()
         except httpx.HTTPStatusError as e:
             if r.status_code == 404:
                 raise DNAHTTPError(
-                    "HF-API 404: 이 모델(repo_id)이 서버리스 Inference API에서 추론 비활성 상태일 수 있습니다. "
-                    "사이드바에서 백엔드를 'tgi'(Inference Endpoint URL 필요) 또는 'openai'(교내 서버)로 전환하거나, "
-                    "'local'(GPU) 모드를 사용하세요."
+                    "HF-API 404: 이 모델이 서버리스 Inference API에서 비활성 상태일 수 있습니다. "
+                    "백엔드를 'tgi'(Endpoint 필요) 또는 'openai'(교내 서버)로 전환하거나, 'local'(GPU) 모드를 사용하세요."
                 ) from e
             raise DNAHTTPError(f"HF-API {r.status_code}: {r.text}") from e
 
@@ -458,9 +465,9 @@ temperature = st.sidebar.slider("창의성(temperature)", 0.0, 1.5, 0.7, 0.1)
 
 # API/엔드포인트/모델/헤더
 endpoint = st.sidebar.text_input("엔드포인트(OpenAI/TGI)", value=get_secret("DNA_R1_ENDPOINT","http://210.93.49.11:8081/v1"))
-api_key = st.sidebar.text_input("API 키(HF_TOKEN 또는 내부 키)", value=get_secret("HF_TOKEN",""), type="password")
-api_key_header = st.sidebar.selectbox("API 키 헤더", ["Authorization: Bearer","X-API-Key","x-api-key"], index=0)
-model_id = st.sidebar.text_input("모델 ID", value=get_secret("DNA_R1_MODEL_ID","dnotitia/DNA-2.0-14B"))
+api_key = st.sidebar.text_input("API 키", value=get_secret("HF_TOKEN",""), type="password")
+api_key_header = st.sidebar.selectbox("API 키 헤더", ["API-KEY","Authorization: Bearer","x-api-key"], index=0)
+model_id = st.sidebar.text_input("모델 ID", value=get_secret("DNA_R1_MODEL_ID","dnotitia/DNA-2.0-30B-A3N"))
 
 # 헬스체크
 if st.sidebar.button("🔎 헬스체크"):
@@ -472,8 +479,8 @@ if st.sidebar.button("🔎 헬스체크"):
             if api_key:
                 if api_key_header.lower().startswith("authorization"):
                     headers["Authorization"] = f"Bearer {api_key}"
-                elif "x-api-key" in api_key_header:
-                    headers["X-API-Key"] = api_key
+                elif api_key_header.strip().lower() in {"api-key","x-api-key"}:
+                    headers["API-KEY"] = api_key
             payload = {
                 "messages": [
                     {"role":"system","content":"오직 JSON만. 키: msg"},
@@ -483,14 +490,16 @@ if st.sidebar.button("🔎 헬스체크"):
                 "stream": False
             }
             if model_id: payload["model"] = model_id
-            r = httpx.post(url, json=payload, headers=headers, timeout=httpx.Timeout(connect=15, read=60))
+            # 디버그용: 어떤 헤더 키가 나가는지 표시(값은 미표시)
+            st.sidebar.write("headers keys:", list(headers.keys()))
+            r = httpx.post(url, json=payload, headers=headers, timeout=HTTPX_TIMEOUT)
             st.sidebar.write(f"OPENAI {r.status_code}")
             st.sidebar.code((r.text[:500] + "...") if len(r.text)>500 else r.text)
 
         elif backend == "hf-api":
             headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
             info_url = f"https://huggingface.co/api/models/{model_id}"
-            r_info = httpx.get(info_url, headers=headers, timeout=30)
+            r_info = httpx.get(info_url, headers=headers, timeout=HTTPX_TIMEOUT)
             st.sidebar.write(f"MODEL INFO {r_info.status_code}")
             gen_url = f"https://api-inference.huggingface.co/models/{model_id}"
             payload = {
@@ -498,7 +507,7 @@ if st.sidebar.button("🔎 헬스체크"):
                 "parameters": {"max_new_tokens": 16, "return_full_text": False, "stop_sequences": ["<|im_end|>"]},
                 "options": {"wait_for_model": True}
             }
-            r = httpx.post(gen_url, json=payload, headers=headers, timeout=httpx.Timeout(connect=15, read=120))
+            r = httpx.post(gen_url, json=payload, headers=headers, timeout=HTTPX_TIMEOUT)
             st.sidebar.write(f"HF-API {r.status_code}")
             if r.status_code == 404:
                 st.sidebar.warning("HF-API 404: 이 모델은 서버리스 추론이 비활성일 수 있습니다. "
@@ -513,7 +522,7 @@ if st.sidebar.button("🔎 헬스체크"):
                 "parameters": {"max_new_tokens": 16, "temperature": 0.7, "top_p": 0.9, "stop": ["<|im_end|>"], "return_full_text": False},
                 "stream": False
             }
-            r = httpx.post(url, json=payload, headers=headers, timeout=httpx.Timeout(connect=15, read=120))
+            r = httpx.post(url, json=payload, headers=headers, timeout=HTTPX_TIMEOUT)
             st.sidebar.write(f"TGI {r.status_code}")
             st.sidebar.code((r.text[:500] + "...") if len(r.text)>500 else r.text)
 
@@ -547,9 +556,18 @@ if use_llm:
 
 # ==================== Header ====================
 st.title("🧭 윤리적 전환 (Ethical Crossroads)")
-st.caption("본 앱은 철학적 사고실험용입니다. 실존 인물·집단 언급/비방, 그래픽 묘사, 실제 위해 권장 없음.")
+st.caption("본 앱은 철학적 사고실험입니다. 실존 인물·집단 언급/비방, 그래픽 묘사, 실제 위해 권장 없음.")
 
 # ==================== Game Loop ====================
+@dataclass
+class LogRow:
+    timestamp: str
+    round: int
+    scenario_id: str
+    title: str
+    mode: str
+    choice: str
+
 idx = st.session_state.round_idx
 if idx >= len(SCENARIOS):
     st.success("모든 단계를 완료했습니다. 사이드바에서 로그를 다운로드하거나 초기화하세요.")
@@ -605,14 +623,11 @@ else:
 
         prog1, prog2, prog3 = st.columns(3)
         with prog1:
-            st.caption("시민 감정")
-            st.progress(int(round(100*m["citizen_sentiment"])))
+            st.caption("시민 감정"); st.progress(int(round(100*m["citizen_sentiment"])))
         with prog2:
-            st.caption("규제 압력")
-            st.progress(int(round(100*m["regulation_pressure"])))
+            st.caption("규제 압력"); st.progress(int(round(100*m["regulation_pressure"])))
         with prog3:
-            st.caption("공정·규칙 만족")
-            st.progress(int(round(100*m["stakeholder_satisfaction"])))
+            st.caption("공정·규칙 만족"); st.progress(int(round(100*m["stakeholder_satisfaction"])))
 
         with st.expander("📰 사회적 반응 펼치기"):
             st.write(f"지지 헤드라인: {nar.get('media_support_headline')}")
