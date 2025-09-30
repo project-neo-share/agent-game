@@ -101,8 +101,8 @@ class DNAClient:
             h["Authorization"] = f"Bearer {self.api_key}"
         elif hk == "x-api-key":
             h["X-API-Key"] = self.api_key
-        elif hk == "x-api-key (lower)":
-            h["x-api-key"] = self.api_key
+        elif hk == "API-KEY":
+            h["API-KEY"] = self.api_key
         else:
             h["Authorization"] = f"Bearer {self.api_key}"
         return h
