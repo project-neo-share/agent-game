@@ -67,17 +67,17 @@ class DNAClient:
     """
     def __init__(self,
                  backend: str = "openai",
-                 model_id: str = "dnotitia/DNA-2.0-14B",
+                 model_id: str = "dnotitia/DNA-2.0-30B-A3B",
                  api_key: Optional[str] = None,
                  endpoint_url: Optional[str] = None,
-                 api_key_header: str = "Authorization: Bearer",
+                 api_key_header: str = "API-KEY",
                  temperature: float = 0.7):
         self.backend = backend
         self.model_id = model_id
         self.api_key = api_key or get_secret("HF_TOKEN") or get_secret("HUGGINGFACEHUB_API_TOKEN")
         self.endpoint_url = endpoint_url or get_secret("DNA_R1_ENDPOINT", "http://210.93.49.11:8081/v1")
         self.temperature = temperature
-        self.api_key_header = api_key_header  # "Authorization: Bearer" | "X-API-Key" | "x-api-key"
+        self.api_key_header = api_key_header  # "Authorization: Bearer" | "API-KEY" |
 
         self._tok = None
         self._model = None
@@ -464,8 +464,8 @@ temperature = st.sidebar.slider("창의성(temperature)", 0.0, 1.5, 0.7, 0.1)
 # API/엔드포인트/모델/헤더
 endpoint = st.sidebar.text_input("엔드포인트(OpenAI/TGI)", value=get_secret("DNA_R1_ENDPOINT","http://210.93.49.11:8081/v1"))
 api_key = st.sidebar.text_input("API 키(HF_TOKEN 또는 내부 키)", value=get_secret("HF_TOKEN",""), type="password")
-api_key_header = st.sidebar.selectbox("API 키 헤더", ["Authorization: Bearer","X-API-Key","x-api-key"], index=0)
-model_id = st.sidebar.text_input("모델 ID", value=get_secret("DNA_R1_MODEL_ID","dnotitia/DNA-2.0-14B"))
+api_key_header = st.sidebar.selectbox("API 키 헤더", ["Authorization: Bearer","API-KEY","x-api-key"], index=0)
+model_id = st.sidebar.text_input("모델 ID", value=get_secret("DNA_R1_MODEL_ID","dnotitia/DNA-2.0-30B-A3B"))
 
 # 헬스체크
 if st.sidebar.button("🔎 헬스체크"):
@@ -477,8 +477,8 @@ if st.sidebar.button("🔎 헬스체크"):
             if api_key:
                 if api_key_header.lower().startswith("authorization"):
                     headers["Authorization"] = f"Bearer {api_key}"
-                elif "x-api-key" in api_key_header:
-                    headers["X-API-Key"] = api_key
+                elif "API-KEY" in api_key_header:
+                    headers["API-KEY"] = api_key
             payload = {
                 "messages": [
                     {"role":"system","content":"오직 JSON만. 키: msg"},
