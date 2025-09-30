@@ -7,6 +7,8 @@
 
 
 # 윤리적 전환 (Ethical Crossroads) – Streamlit
+TU Korea, 인공지능 경영 2025 가을
+강송희 교수
 
 ## 빠른 실행 (로컬)
 pip install -r requirements.txt
