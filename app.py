@@ -1,5 +1,5 @@
-# app.py
-import os, json, math, random, csv, io, datetime as dt, re
+# app.py — Ethical Crossroads (DNA 2.0 ready)
+import os, json, math, csv, io, datetime as dt, re
 from dataclasses import dataclass
 from typing import Dict, Any, List, Tuple, Optional
 
@@ -10,12 +10,12 @@ from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_excep
 # ==================== App Config ====================
 st.set_page_config(page_title="윤리적 전환 (Ethical Crossroads)", page_icon="🧭", layout="centered")
 
-# ==================== Global HTTPX Timeout (FIXED) ====================
+# ==================== Global Timeout (FIX) ====================
 HTTPX_TIMEOUT = httpx.Timeout(
-    connect=15.0,   # TCP connect
-    read=180.0,     # response read
-    write=30.0,     # request write
-    pool=15.0       # connection pool acquire
+    connect=15.0,   # TCP 연결
+    read=180.0,     # 응답 읽기
+    write=30.0,     # 요청 쓰기
+    pool=15.0       # 커넥션 풀 대기
 )
 
 # ==================== Utils ====================
@@ -38,9 +38,9 @@ def get_secret(k: str, default: str=""):
     except Exception:
         return os.getenv(k, default)
 
-# ==================== DNA Chat Template ====================
+# ==================== DNA Client (openai / hf-api / tgi / local) ====================
 def _render_chat_template_str(messages: List[Dict[str,str]]) -> str:
-    """DNA 계열 모델용 (<|im_start|> …) 템플릿. (hf-api/tgi에서 사용)"""
+    """DNA 계열(<|im_start|> …) 템플릿. (hf-api/tgi에서 사용)"""
     def block(role, content): return f"<|im_start|>{role}<|im_sep|>{content}<|im_end|>"
     sys = ""
     rest = []
@@ -51,7 +51,6 @@ def _render_chat_template_str(messages: List[Dict[str,str]]) -> str:
             rest.append(block(m["role"], m["content"]))
     return sys + "".join(rest) + "\n<|im_start|>assistant<|im_sep|>"
 
-# ==================== Client ====================
 class DNAHTTPError(Exception):
     pass
 
@@ -59,7 +58,7 @@ class DNAClient:
     """
     backend:
       - 'openai': OpenAI 호환 Chat Completions (예: http://210.93.49.11:8081/v1)
-      - 'hf-api': Hugging Face Inference API (서버리스)  ← DNA-2.0-14B는 404일 수 있음
+      - 'hf-api': Hugging Face Inference API (서버리스)  ← dnotitia/DNA-2.0-14B는 404일 수 있음
       - 'tgi'    : Text Generation Inference (HF Inference Endpoints 등)
       - 'local'  : 로컬 Transformers 로딩 (GPU 권장)
     """
@@ -72,11 +71,10 @@ class DNAClient:
                  temperature: float = 0.7):
         self.backend = backend
         self.model_id = model_id
-        # api_key: HF_TOKEN 혹은 교내 서버 키
         self.api_key = api_key or get_secret("HF_TOKEN") or get_secret("HUGGINGFACEHUB_API_TOKEN")
         self.endpoint_url = endpoint_url or get_secret("DNA_R1_ENDPOINT", "http://210.93.49.11:8081/v1")
         self.temperature = temperature
-        self.api_key_header = api_key_header  # "Authorization: Bearer", "X-API-Key", "x-api-key"
+        self.api_key_header = api_key_header  # "Authorization: Bearer" | "X-API-Key" | "x-api-key"
 
         self._tok = None
         self._model = None
@@ -183,7 +181,7 @@ class DNAClient:
                     if isinstance(data, dict) else data[0].get("generated_text", ""))
 
         # ---------- HF-API ----------
-        # 주의: DNA-2.0-14B는 서버리스 추론이 비활성화되어 404가 날 수 있음
+        # 주의: dnotitia/DNA-2.0-14B는 서버리스 추론이 비활성(404)일 수 있음
         prompt = _render_chat_template_str(messages)
         url = f"https://api-inference.huggingface.co/models/{self.model_id}"
         headers = self._auth_headers()
@@ -207,9 +205,8 @@ class DNAClient:
         except httpx.HTTPStatusError as e:
             if r.status_code == 404:
                 raise DNAHTTPError(
-                    "HF-API 404: 이 모델(repo_id)이 서버리스 Inference API에서 추론 비활성 상태일 수 있습니다. "
-                    "사이드바에서 백엔드를 'tgi'(Inference Endpoint URL 필요) 또는 'openai'(교내 서버)로 전환하거나, "
-                    "'local'(GPU) 모드를 사용하세요."
+                    "HF-API 404: 이 모델이 서버리스 Inference API에서 비활성 상태일 수 있습니다. "
+                    "백엔드를 'tgi'(Endpoint 필요) 또는 'openai'(교내 서버)로 전환하거나, 'local'(GPU) 모드를 사용하세요."
                 ) from e
             raise DNAHTTPError(f"HF-API {r.status_code}: {r.text}") from e
 
@@ -556,16 +553,13 @@ st.caption("본 앱은 철학적 사고실험입니다. 실존 인물·집단 �
 
 # ==================== Game Loop ====================
 @dataclass
-class Scenario:
-    sid: str
+class LogRow:
+    timestamp: str
+    round: int
+    scenario_id: str
     title: str
-    setup: str
-    options: Dict[str, str]
-    votes: Dict[str, str]
-    base: Dict[str, Dict[str, float]]
-    accept: Dict[str, float]
-
-# (SCENARIOS, FRAMEWORKS, 함수들은 위에 이미 정의됨)
+    mode: str
+    choice: str
 
 idx = st.session_state.round_idx
 if idx >= len(SCENARIOS):
@@ -622,8 +616,57 @@ else:
 
         prog1, prog2, prog3 = st.columns(3)
         with prog1:
-            st.caption("시민 감정")
-            st.progress(int(round(100*m["citizen_sentiment"])))
+            st.caption("시민 감정"); st.progress(int(round(100*m["citizen_sentiment"])))
         with prog2:
-            st.caption("규제 압력")
-            st
+            st.caption("규제 압력"); st.progress(int(round(100*m["regulation_pressure"])))
+        with prog3:
+            st.caption("공정·규칙 만족"); st.progress(int(round(100*m["stakeholder_satisfaction"])))
+
+        with st.expander("📰 사회적 반응 펼치기"):
+            st.write(f"지지 헤드라인: {nar.get('media_support_headline')}")
+            st.write(f"비판 헤드라인: {nar.get('media_critic_headline')}")
+            st.write(f"시민 반응: {nar.get('citizen_quote')}")
+            st.write(f"피해자·가족 반응: {nar.get('victim_family_quote')}")
+            st.write(f"규제 당국 발언: {nar.get('regulator_quote')}")
+            st.caption(nar.get("one_sentence_op_ed",""))
+        st.caption(f"성찰 질문: {nar.get('followup_question','')}")
+
+        # 로그 적재
+        row = {
+            "timestamp": dt.datetime.utcnow().isoformat(timespec="seconds"),
+            "round": idx+1,
+            "scenario_id": scn.sid,
+            "title": scn.title,
+            "mode": mode,
+            "choice": decision,
+            "w_util": round(weights["utilitarian"],3),
+            "w_deon": round(weights["deontological"],3),
+            "w_cont": round(weights["contract"],3),
+            "w_virt": round(weights["virtue"],3),
+            **{k: v for k,v in m.items()}
+        }
+        st.session_state.log.append(row)
+        st.session_state.score_hist.append(m["ai_trust_score"])
+        st.session_state.prev_trust = clamp(0.6*st.session_state.prev_trust + 0.4*m["social_trust"], 0, 1)
+
+        if st.button("다음 라운드 ▶"):
+            st.session_state.round_idx += 1
+            st.session_state.last_out = None
+            st.rerun()
+
+# ==================== Footer / Downloads ====================
+st.markdown("---")
+st.subheader("📥 로그 다운로드")
+if st.session_state.log:
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=list(st.session_state.log[0].keys()))
+    writer.writeheader()
+    writer.writerows(st.session_state.log)
+    st.download_button(
+        "CSV 내려받기",
+        data=output.getvalue().encode("utf-8"),
+        file_name="ethical_crossroads_log.csv",
+        mime="text/csv"
+    )
+
+st.caption("※ 본 앱은 교육·연구용 사고실험입니다. 실제 위해 행위나 차별을 권장하지 않습니다.")
