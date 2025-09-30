@@ -1,4 +1,7 @@
 # app.py — Ethical Crossroads (DNA 2.0 ready)
+# author: Prof. Songhee Kang
+# AIM 2025, Fall. TU Korea
+
 import os, json, math, csv, io, datetime as dt, re
 from dataclasses import dataclass
 from typing import Dict, Any, List, Tuple, Optional
