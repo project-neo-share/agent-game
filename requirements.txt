@@ -3,3 +3,4 @@ httpx
 tenacity
 transformers
 torch
+accelerate
