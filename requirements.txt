@@ -2,3 +2,4 @@ streamlit
 httpx
 tenacity
 transformers
+pytorch
