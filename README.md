@@ -1,5 +1,6 @@
 # agent-game/
-├─ app.py                     # 수정된 스트림릿 앱 (DNA-R1 클라이언트 포함)
+
+├─ app.py                     # 수정된 스트림릿 앱 (QWEN 클라이언트 포함)
 ├─ requirements.txt           # 클라우드 배포(원격 추론)용 최소 의존성
 ├─ requirements-local.txt     # 로컬(GPU)에서 모델 직접 로드용
 └─ .streamlit/
