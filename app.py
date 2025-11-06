@@ -9,7 +9,7 @@ from scipy.stats import entropy, pearsonr
 
 
 st.set_page_config(page_title="Ethics GPT Sim", layout="wide")
-st.title("🌍 Global AI Ethics Simulator (with GPT & Alerts)")
+st.title("🌍 Global AI Ethics Simulator")
 
 # ----------------------------- Configuration -----------------------------
 CULTURES = {
