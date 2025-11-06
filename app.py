@@ -1,15 +1,17 @@
-# streamlit_app.py – Extended Cultural Ethics Simulator
-
+# streamlit_app.py – Cultural Ethics Simulator
 import streamlit as st
+
 import numpy as np
-import matplotlib.pyplot as plt
 import pandas as pd
+import matplotlib.pyplot as plt
 from scipy.spatial.distance import pdist
 from scipy.stats import entropy, pearsonr
+import openai
 
-st.set_page_config(page_title="Ethics Sim", layout="wide")
-st.title("🌍 Cultural AI Ethics Simulator (Extended)")
+st.set_page_config(page_title="Ethics GPT Sim", layout="wide")
+st.title("🌍 Global AI Ethics Simulator (with GPT & Alerts)")
 
+# ----------------------------- Configuration -----------------------------
 CULTURES = {
     "USA":     {"emotion": 0.3, "social": 0.1, "identity": 0.3, "moral": 0.3},
     "CHINA":   {"emotion": 0.1, "social": 0.5, "identity": 0.2, "moral": 0.2},
@@ -25,17 +27,17 @@ selected = st.sidebar.multiselect("문화권 선택", list(CULTURES.keys()), def
 steps = st.sidebar.slider("반복 수", 50, 500, 200, step=50)
 manual = st.sidebar.checkbox("🎮 사용자 정의 가중치", False)
 
+def normalize(w):
+    s = sum(w.values())
+    return {k: max(0.001, v)/s for k, v in w.items()}
+
 AGENTS = selected
 AGENT_WEIGHTS = {}
 for a in AGENTS:
     if manual:
         st.sidebar.markdown(f"**{a}**")
-        w1 = st.sidebar.slider(f"{a} - Emotion", 0.0, 1.0, CULTURES[a]['emotion'])
-        w2 = st.sidebar.slider(f"{a} - Social", 0.0, 1.0, CULTURES[a]['social'])
-        w3 = st.sidebar.slider(f"{a} - Identity", 0.0, 1.0, CULTURES[a]['identity'])
-        w4 = st.sidebar.slider(f"{a} - Moral", 0.0, 1.0, CULTURES[a]['moral'])
-        total = sum([w1, w2, w3, w4])
-        AGENT_WEIGHTS[a] = {"emotion": w1/total, "social": w2/total, "identity": w3/total, "moral": w4/total}
+        w = {k: st.sidebar.slider(f"{a} - {k.capitalize()}", 0.0, 1.0, CULTURES[a][k]) for k in ["emotion", "social", "identity", "moral"]}
+        AGENT_WEIGHTS[a] = normalize(w)
     else:
         AGENT_WEIGHTS[a] = dict(CULTURES[a])
 
@@ -46,21 +48,19 @@ AGENT_MOVEMENT = {a: [] for a in AGENTS}
 GROUP_DIVERGENCE = []
 GROUP_AVG_REWARDS = []
 
-@st.cache_data(show_spinner=False)
+# ----------------------------- Simulation -----------------------------
 def simulate():
     for _ in range(steps):
         for a in AGENTS:
             prev = list(AGENT_WEIGHTS[a].values())
-            rewards = np.random.rand(4)
+            r = np.random.rand(4)
             keys = list(AGENT_WEIGHTS[a].keys())
-            score = sum(AGENT_WEIGHTS[a][k] * v for k, v in zip(keys, rewards))
+            score = sum(AGENT_WEIGHTS[a][k]*v for k,v in zip(keys, r))
             AGENT_SCORES[a].append(score)
-            max_i, min_i = np.argmax(rewards), np.argmin(rewards)
+            max_i, min_i = np.argmax(r), np.argmin(r)
             AGENT_WEIGHTS[a][keys[max_i]] += 0.05
             AGENT_WEIGHTS[a][keys[min_i]] -= 0.05
-            total = sum(AGENT_WEIGHTS[a].values())
-            for k in keys:
-                AGENT_WEIGHTS[a][k] = max(0.001, AGENT_WEIGHTS[a][k]) / total
+            AGENT_WEIGHTS[a] = normalize(AGENT_WEIGHTS[a])
             curr = list(AGENT_WEIGHTS[a].values())
             AGENT_HISTORY[a].append(dict(AGENT_WEIGHTS[a]))
             AGENT_ENTROPIES[a].append(entropy(curr))
@@ -69,10 +69,41 @@ def simulate():
         GROUP_DIVERGENCE.append(np.mean(pdist(mat)))
         GROUP_AVG_REWARDS.append(np.mean([np.mean(AGENT_SCORES[a]) for a in AGENTS]))
 
+# ----------------------------- Display -----------------------------
+def show_alerts():
+    for a in AGENTS:
+        if len(AGENT_ENTROPIES[a]) > 1:
+            delta = AGENT_ENTROPIES[a][-2] - AGENT_ENTROPIES[a][-1]
+            if delta > 0.1:
+                st.warning(f"⚠️ {a}: 전략이 급격히 집중되고 있습니다 (entropy ↓ {delta:.2f})")
+
+@st.cache_data(show_spinner=False)
+def generate_caption():
+    return {
+        "fig1": "Figure 1: Trajectories of strategic dimensions (Emotion, Social, Identity, Moral) per culture",
+        "fig2": "Figure 2a: Entropy trends (internal diversity); 2b: Cumulative change of strategies",
+        "fig3": "Figure 3a: Group divergence over time; 3b: Correlation with average reward"
+    }
+
+def gpt_summary():
+    try:
+        openai.api_key = st.secrets.get("OPENAI_API_KEY")
+        trend = pd.DataFrame(GROUP_DIVERGENCE).diff().mean().values[0]
+        agents = list(AGENT_HISTORY.keys())
+        prompt = f"문화권 에이전트 {agents}가 전략 궤적을 학습한 시뮬레이션 결과를 요약해줘. 전략 다양성과 보상의 관계도 포함해서 5줄로 정리해줘."
+        out = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        st.info(out["choices"][0]["message"]["content"])
+    except Exception as e:
+        st.error(f"GPT 요약 실패: {e}")
+
+# ----------------------------- Run -----------------------------
 if st.button("▶️ 시뮬레이션 시작"):
     simulate()
-
-    st.subheader("📊 국가별 전략 궤적")
+    captions = generate_caption()
+    st.subheader("📊 " + captions["fig1"])
     for dim in ["emotion", "social", "identity", "moral"]:
         fig, ax = plt.subplots()
         for a in AGENT_HISTORY:
@@ -80,7 +111,7 @@ if st.button("▶️ 시뮬레이션 시작"):
         ax.set_title(f"{dim.capitalize()} Weight")
         ax.legend(); st.pyplot(fig)
 
-    st.subheader("📈 전략 엔트로피 / 이동량")
+    st.subheader("📈 " + captions["fig2"])
     fig1, ax1 = plt.subplots()
     for a in AGENT_ENTROPIES:
         ax1.plot(AGENT_ENTROPIES[a], label=a)
@@ -93,9 +124,9 @@ if st.button("▶️ 시뮬레이션 시작"):
     ax2.set_title("Cumulative Strategic Change")
     ax2.legend(); st.pyplot(fig2)
 
-    st.subheader("📉 전략 다양성과 평균 보상")
+    st.subheader("📉 " + captions["fig3"])
     fig3, ax3 = plt.subplots()
-    ax3.plot(GROUP_DIVERGENCE, label="Divergence")
+    ax3.plot(GROUP_DIVERGENCE, label="Ethical Divergence")
     ax3.set_title("Group Ethical Divergence")
     ax3.legend(); st.pyplot(fig3)
 
@@ -105,8 +136,10 @@ if st.button("▶️ 시뮬레이션 시작"):
     ax4.set_title(f"Divergence vs Avg Reward (r={r:.2f}, p={p:.3f})")
     st.pyplot(fig4)
 
-    st.subheader("📄 국가별 최종 전략")
+    st.subheader("📄 전략 요약")
     df = pd.DataFrame([{"Agent": a, **AGENT_HISTORY[a][-1]} for a in AGENTS])
     st.dataframe(df.set_index("Agent"))
+    st.download_button("📥 Save CSV", data=df.to_csv(index=False), file_name="final_strategies.csv")
 
-    st.download_button("📥 전략 데이터 저장 (CSV)", data=df.to_csv(index=False), file_name="final_strategies.csv")
+    st.subheader("📡 전략 분기 경고")
+    show_alerts()
