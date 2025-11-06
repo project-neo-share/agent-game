@@ -6,7 +6,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.spatial.distance import pdist
 from scipy.stats import entropy, pearsonr
-import openai
+
 
 st.set_page_config(page_title="Ethics GPT Sim", layout="wide")
 st.title("🌍 Global AI Ethics Simulator (with GPT & Alerts)")
