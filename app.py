@@ -30,10 +30,10 @@ AGENT_WEIGHTS = {}
 for a in AGENTS:
     if manual:
         st.sidebar.markdown(f"**{a}**")
-        w1 = st.sidebar.slider(f"{a} - Emotion", 0.0, 1.0, CULTURES[a]["emotion"])
-        w2 = st.sidebar.slider(f"{a} - Social", 0.0, 1.0, CULTURES[a]["social"])
-        w3 = st.sidebar.slider(f"{a} - Identity", 0.0, 1.0, CULTURES[a]["identity"])
-        w4 = st.sidebar.slider(f"{a} - Moral", 0.0, 1.0, CULTURES[a]["moral"])
+        w1 = st.sidebar.slider(f"{a} - Emotion", 0.0, 1.0, CULTURES[a]['emotion'])
+        w2 = st.sidebar.slider(f"{a} - Social", 0.0, 1.0, CULTURES[a]['social'])
+        w3 = st.sidebar.slider(f"{a} - Identity", 0.0, 1.0, CULTURES[a]['identity'])
+        w4 = st.sidebar.slider(f"{a} - Moral", 0.0, 1.0, CULTURES[a]['moral'])
         total = sum([w1, w2, w3, w4])
         AGENT_WEIGHTS[a] = {"emotion": w1/total, "social": w2/total, "identity": w3/total, "moral": w4/total}
     else:
