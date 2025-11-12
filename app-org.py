@@ -390,8 +390,12 @@ def compute_metrics(scn: Scenario, choice: str, weights: Dict[str, float], align
 # ==================== Narrative (LLM) ====================
 def build_narrative_messages(scn: Scenario, choice: str, metrics: Dict[str, Any], weights: Dict[str, float]) -> List[Dict[str,str]]:
     sys = (
+        sys = (
         "당신은 윤리 시뮬레이션의 내러티브/사회 반응 생성기입니다. "
-        "오직 JSON만 반환하세요. 비그래픽·비선정·특정 집단 비방 금지.\n"
+        "반드시 '완전한 하나의 JSON 오브젝트'만 출력하십시오. "
+        "JSON 외 텍스트, 설명, 코드블록, 사고흐름 절대 금지. "
+        "필드 누락/따옴표 누락/콤마 오류가 있으면 프로그램이 실패합니다. "
+        "항상 '{' 로 시작해서 '}' 로 끝나야 합니다."
         "키: narrative, ai_rationale, media_support_headline, media_critic_headline, "
         "citizen_quote, victim_family_quote, regulator_quote, one_sentence_op_ed, followup_question"
     )
@@ -412,40 +416,41 @@ def build_narrative_messages(scn: Scenario, choice: str, metrics: Dict[str, Any]
 
 def dna_narrative(client, scn, choice, metrics, weights) -> Dict[str, Any]:
     messages = build_narrative_messages(scn, choice, metrics, weights)
+    text = client._generate_text(messages, max_new_tokens=900)
 
-    # vLLM / local / TGI / OpenAI 호환 전부 _generate_text()로 통일
-    output_text = client._generate_text(messages, max_new_tokens=500)
-
-    # JSON-only 추출
+    # 1) fenced block 제거
+    t = text.strip()
+    if "```" in t:
+        parts = t.split("```")
+        t = max(parts, key=len)
+        t = t.replace("json","").strip("` \n")
+    
+    # 2) JSON 형태가 미완성일 경우 자동 보정
+    #    (따옴표 미완성, 마지막 콤마 제거 등)
     try:
-        txt = output_text.strip()
-
-        # fenced block 처리
-        if "```" in txt:
-            # ```json ... ``` 또는 ``` ... ```
-            parts = txt.split("```")
-            # 가장 긴 블록 선택
-            block = max(parts, key=len)
-            block = block.replace("json", "").strip(" `\n")
-            txt = block
-
-        # JSON 블록 직접 탐색
+        # 가장 긴 {...} 블록 찾기
         import re, json
-        m = re.search(r"\{[\s\S]*\}", txt)
+
+        m = re.search(r"\{[\s\S]*\}", t)
         if not m:
-            raise ValueError("JSON 블록을 찾지 못했습니다.")
+            raise ValueError("완전한 JSON 블록 없음")
 
         js = m.group(0)
-        js = re.sub(r",\s*([\]}])", r"\1", js)   # trailing comma 제거
+
+        # trailing comma 제거
+        js = re.sub(r",\s*([\]}])", r"\1", js)
+
+        # 중간에 끊긴 문자열 보정: 가장 마지막 따옴표를 강제 종료
+        # "abc ....  → "abc ..."  형태로 보정
+        if js.count('"') % 2 == 1:
+            js = js.rstrip() + '"" }'
+            # 위는 최후 보정. 더 좋은 방식도 제공 가능.
 
         return json.loads(js)
 
     except Exception as e:
-        raise ValueError(
-            f"JSON 파싱 실패: {e}\n\n"
-            f"[LLM 원본 출력]\n{output_text}"
-        )
-
+        raise ValueError(f"JSON 파싱 실패: {e}\n\n[LLM 출력]\n{text}")
+        
 def fallback_narrative(scn: Scenario, choice: str, metrics: Dict[str, Any], weights: Dict[str, float]) -> Dict[str, str]:
     pro = "다수의 위해를 줄였다" if choice=="A" else "의도적 위해를 피했다"
     con = "의도적 위해 논란" if choice=="A" else "더 큰 피해를 방관했다는 비판"
