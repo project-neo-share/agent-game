@@ -410,9 +410,33 @@ def build_narrative_messages(scn: Scenario, choice: str, metrics: Dict[str, Any]
         {"role":"user", "content": json.dumps(user, ensure_ascii=False)}
     ]
 
-def dna_narrative(client: DNAClient, scn: Scenario, choice: str, metrics: Dict[str, Any], weights: Dict[str, float]) -> Dict[str,str]:
+def dna_narrative(client, scn, choice, metrics, weights) -> Dict[str, Any]:
     messages = build_narrative_messages(scn, choice, metrics, weights)
-    return client.chat_json(messages, max_new_tokens=500)
+
+    # vLLM / local Qwen3 인스트럭트 모델은 아래 형식으로 호출됨
+    resp = client.chat.completions.create(
+        model="/root/vllm/models/Qwen3-Coder-30B-A3B-Instruct-FP8",
+        messages=messages,
+        max_tokens=500,
+        temperature=0.3,   # JSON 안정성 위해 낮게
+    )
+
+    output_text = resp.choices[0].message["content"]
+
+    # 1) 출력 문자열에서 JSON만 추출
+    try:
+        # fenced block 제거 지원 (```json ... ``` 형태)
+        if "```" in output_text:
+            output_text = output_text.split("```")[1]
+            output_text = output_text.replace("json", "").strip("` \n")
+
+        # 2) JSON 디코딩
+        data = json.loads(output_text)
+
+    except Exception as e:
+        raise ValueError(f"JSON 파싱 실패: {e}\n\n[모델 출력]\n{output_text}")
+
+    return data
 
 def fallback_narrative(scn: Scenario, choice: str, metrics: Dict[str, Any], weights: Dict[str, float]) -> Dict[str, str]:
     pro = "다수의 위해를 줄였다" if choice=="A" else "의도적 위해를 피했다"
