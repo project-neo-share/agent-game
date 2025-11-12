@@ -390,7 +390,6 @@ def compute_metrics(scn: Scenario, choice: str, weights: Dict[str, float], align
 # ==================== Narrative (LLM) ====================
 def build_narrative_messages(scn: Scenario, choice: str, metrics: Dict[str, Any], weights: Dict[str, float]) -> List[Dict[str,str]]:
     sys = (
-        sys = (
         "당신은 윤리 시뮬레이션의 내러티브/사회 반응 생성기입니다. "
         "반드시 '완전한 하나의 JSON 오브젝트'만 출력하십시오. "
         "JSON 외 텍스트, 설명, 코드블록, 사고흐름 절대 금지. "
