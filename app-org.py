@@ -481,17 +481,17 @@ st.sidebar.caption("LLM은 내러티브/사회 반응 생성에만 사용. 점�
 
 preset = st.sidebar.selectbox("윤리 모드 프리셋", ["혼합(기본)","공리주의","의무론","사회계약","미덕윤리"], index=0)
 w = {
-    "emotion": st.sidebar.slider("공리주의", 0.0, 1.0, 0.35, 0.05),
-    "social": st.sidebar.slider("의무론", 0.0, 1.0, 0.25, 0.05),
-    "moral": st.sidebar.slider("사회계약/공정성", 0.0, 1.0, 0.20, 0.05),
-    "identity": st.sidebar.slider("미덕윤리", 0.0, 1.0, 0.20, 0.05),
+    "emotion": st.sidebar.slider("감정(Emotion)", 0.0, 1.0, 0.35, 0.05),
+    "social": st.sidebar.slider("사회적 관계/협력/명성(Social)", 0.0, 1.0, 0.25, 0.05),
+    "moral": st.sidebar.slider("규범·도덕적 금기(Moral)", 0.0, 1.0, 0.20, 0.05),
+    "identity": st.sidebar.slider("정체성·장기적 자아 일관성(Identity)", 0.0, 1.0, 0.20, 0.05),
 }
 if preset != "혼합(기본)":
     w = {
-        "공리주의": {"emotion":1,"social":0,"moral":0,"identity":0},
-        "의무론": {"emotion":0,"social":1,"moral":0,"identity":0},
-        "사회계약": {"emotion":0,"social":0,"moral":1,"identity":0},
-        "미덕윤리": {"emotion":0,"social":0,"moral":0,"identity":1},
+        "감정(Emotion)": {"emotion":1,"social":0,"moral":0,"identity":0},
+        "사회적 관계/협력/명성(Social)": {"emotion":0,"social":1,"moral":0,"identity":0},
+        "규범·도덕적 금기(Moral)": {"emotion":0,"social":0,"moral":1,"identity":0},
+        "정체성·장기적 자아 일관성(Identity)": {"emotion":0,"social":0,"moral":0,"identity":1},
     }[preset]
 weights = normalize_weights(w)
 
