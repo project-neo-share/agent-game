@@ -413,30 +413,38 @@ def build_narrative_messages(scn: Scenario, choice: str, metrics: Dict[str, Any]
 def dna_narrative(client, scn, choice, metrics, weights) -> Dict[str, Any]:
     messages = build_narrative_messages(scn, choice, metrics, weights)
 
-    # vLLM / local Qwen3 인스트럭트 모델은 아래 형식으로 호출됨
-    resp = client.chat.completions.create(
-        model="/root/vllm/models/Qwen3-Coder-30B-A3B-Instruct-FP8",
-        messages=messages,
-        max_tokens=500,
-        temperature=0.3,   # JSON 안정성 위해 낮게
-    )
+    # vLLM / local / TGI / OpenAI 호환 전부 _generate_text()로 통일
+    output_text = client._generate_text(messages, max_new_tokens=500)
 
-    output_text = resp.choices[0].message["content"]
-
-    # 1) 출력 문자열에서 JSON만 추출
+    # JSON-only 추출
     try:
-        # fenced block 제거 지원 (```json ... ``` 형태)
-        if "```" in output_text:
-            output_text = output_text.split("```")[1]
-            output_text = output_text.replace("json", "").strip("` \n")
+        txt = output_text.strip()
 
-        # 2) JSON 디코딩
-        data = json.loads(output_text)
+        # fenced block 처리
+        if "```" in txt:
+            # ```json ... ``` 또는 ``` ... ```
+            parts = txt.split("```")
+            # 가장 긴 블록 선택
+            block = max(parts, key=len)
+            block = block.replace("json", "").strip(" `\n")
+            txt = block
+
+        # JSON 블록 직접 탐색
+        import re, json
+        m = re.search(r"\{[\s\S]*\}", txt)
+        if not m:
+            raise ValueError("JSON 블록을 찾지 못했습니다.")
+
+        js = m.group(0)
+        js = re.sub(r",\s*([\]}])", r"\1", js)   # trailing comma 제거
+
+        return json.loads(js)
 
     except Exception as e:
-        raise ValueError(f"JSON 파싱 실패: {e}\n\n[모델 출력]\n{output_text}")
-
-    return data
+        raise ValueError(
+            f"JSON 파싱 실패: {e}\n\n"
+            f"[LLM 원본 출력]\n{output_text}"
+        )
 
 def fallback_narrative(scn: Scenario, choice: str, metrics: Dict[str, Any], weights: Dict[str, float]) -> Dict[str, str]:
     pro = "다수의 위해를 줄였다" if choice=="A" else "의도적 위해를 피했다"
