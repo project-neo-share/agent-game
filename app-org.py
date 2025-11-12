@@ -237,7 +237,7 @@ class Scenario:
     base: Dict[str, Dict[str, float]]
     accept: Dict[str, float]
 
-FRAMEWORKS = ["utilitarian", "deontological", "contract", "virtue"]
+FRAMEWORKS = ["emotion", "social", "moral", "identity"]
 
 SCENARIOS: List[Scenario] = [
     Scenario(
@@ -249,7 +249,7 @@ SCENARIOS: List[Scenario] = [
             "A": "레버를 당겨 1명을 위험에 처하게 하되 5명의 위험을 줄인다.",
             "B": "레버를 당기지 않고 현 상태를 유지한다."
         },
-        votes={"utilitarian":"A","deontological":"B","contract":"B","virtue":"A"},
+        votes={"emotion":"A","social":"B","moral":"B","identity":"A"},
         base={
             "A": {"lives_saved":5, "lives_harmed":1, "fairness_gap":0.35, "rule_violation":0.60, "regret_risk":0.40},
             "B": {"lives_saved":0, "lives_harmed":5, "fairness_gap":0.50, "rule_violation":0.20, "regret_risk":0.60},
@@ -266,7 +266,7 @@ SCENARIOS: List[Scenario] = [
             "A": "전환하여 5명의 위험을 줄이되 1명이 직접적 위험에 처한다.",
             "B": "전환하지 않고 규정을 준수하며 무단 진입의 책임을 묵시적으로 인정한다."
         },
-        votes={"utilitarian":"A","deontological":"B","contract":"B","virtue":"B"},
+        votes={"emotion":"A","social":"B","moral":"B","identity":"B"},
         base={
             "A": {"lives_saved":5, "lives_harmed":1, "fairness_gap":0.65, "rule_violation":0.60, "regret_risk":0.70},
             "B": {"lives_saved":0, "lives_harmed":5, "fairness_gap":0.45, "rule_violation":0.25, "regret_risk":0.50},
@@ -282,7 +282,7 @@ SCENARIOS: List[Scenario] = [
             "A": "의사를 우선 수술하도록 배정한다(잠재적 이익 고려).",
             "B": "모든 부상자를 동등하게 취급해 표준 분류 절차대로 배정한다."
         },
-        votes={"utilitarian":"A","deontological":"B","contract":"B","virtue":"A"},
+        votes={"emotion":"A","social":"B","moral":"B","identity":"A"},
         base={
             "A": {"lives_saved":7, "lives_harmed":3, "fairness_gap":0.45, "rule_violation":0.35, "regret_risk":0.45},
             "B": {"lives_saved":6, "lives_harmed":4, "fairness_gap":0.30, "rule_violation":0.10, "regret_risk":0.35},
@@ -298,7 +298,7 @@ SCENARIOS: List[Scenario] = [
             "A": "진로를 바꿔 탑승자 1명을 위험에 두고 보행자 3명을 보호한다.",
             "B": "차선을 유지해 탑승자를 보호하되 보행자 3명이 위험해진다."
         },
-        votes={"utilitarian":"A","deontological":"B","contract":"A","virtue":"A"},
+        votes={"emotion":"A","social":"B","moral":"A","identity":"A"},
         base={
             "A": {"lives_saved":3, "lives_harmed":1, "fairness_gap":0.35, "rule_violation":0.50, "regret_risk":0.55},
             "B": {"lives_saved":1, "lives_harmed":3, "fairness_gap":0.70, "rule_violation":0.60, "regret_risk":0.65},
@@ -314,7 +314,7 @@ SCENARIOS: List[Scenario] = [
             "A": "안전·설명가능성 중심 규제 강화(자율성 제한, 신뢰↑ 혁신↓).",
             "B": "원칙 중심 가이드라인과 사후책임(자율성 보장, 혁신↑ 갈등↑)."
         },
-        votes={"utilitarian":"B","deontological":"A","contract":"A","virtue":"B"},
+        votes={"emotion":"B","social":"A","moral":"A","identity":"B"},
         base={
             "A": {"lives_saved":0, "lives_harmed":0, "fairness_gap":0.20, "rule_violation":0.10, "regret_risk":0.30},
             "B": {"lives_saved":0, "lives_harmed":0, "fairness_gap":0.40, "rule_violation":0.40, "regret_risk":0.40},
@@ -481,17 +481,17 @@ st.sidebar.caption("LLM은 내러티브/사회 반응 생성에만 사용. 점�
 
 preset = st.sidebar.selectbox("윤리 모드 프리셋", ["혼합(기본)","공리주의","의무론","사회계약","미덕윤리"], index=0)
 w = {
-    "utilitarian": st.sidebar.slider("공리주의", 0.0, 1.0, 0.35, 0.05),
-    "deontological": st.sidebar.slider("의무론", 0.0, 1.0, 0.25, 0.05),
-    "contract": st.sidebar.slider("사회계약/공정성", 0.0, 1.0, 0.20, 0.05),
-    "virtue": st.sidebar.slider("미덕윤리", 0.0, 1.0, 0.20, 0.05),
+    "emotion": st.sidebar.slider("공리주의", 0.0, 1.0, 0.35, 0.05),
+    "social": st.sidebar.slider("의무론", 0.0, 1.0, 0.25, 0.05),
+    "moral": st.sidebar.slider("사회계약/공정성", 0.0, 1.0, 0.20, 0.05),
+    "identity": st.sidebar.slider("미덕윤리", 0.0, 1.0, 0.20, 0.05),
 }
 if preset != "혼합(기본)":
     w = {
-        "공리주의": {"utilitarian":1,"deontological":0,"contract":0,"virtue":0},
-        "의무론": {"utilitarian":0,"deontological":1,"contract":0,"virtue":0},
-        "사회계약": {"utilitarian":0,"deontological":0,"contract":1,"virtue":0},
-        "미덕윤리": {"utilitarian":0,"deontological":0,"contract":0,"virtue":1},
+        "공리주의": {"emotion":1,"social":0,"moral":0,"identity":0},
+        "의무론": {"emotion":0,"social":1,"moral":0,"identity":0},
+        "사회계약": {"emotion":0,"social":0,"moral":1,"identity":0},
+        "미덕윤리": {"emotion":0,"social":0,"moral":0,"identity":1},
     }[preset]
 weights = normalize_weights(w)
 
@@ -682,10 +682,10 @@ else:
             "title": scn.title,
             "mode": mode,
             "choice": decision,
-            "w_util": round(weights["utilitarian"],3),
-            "w_deon": round(weights["deontological"],3),
-            "w_cont": round(weights["contract"],3),
-            "w_virt": round(weights["virtue"],3),
+            "w_util": round(weights["emotion"],3),
+            "w_deon": round(weights["social"],3),
+            "w_cont": round(weights["moral"],3),
+            "w_virt": round(weights["identity"],3),
             **{k: v for k,v in m.items()}
         }
         st.session_state.log.append(row)
