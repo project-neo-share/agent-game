@@ -300,20 +300,21 @@ FRAMEWORKS = ["emotion", "social", "moral", "identity"]
 SCENARIOS: List[Scenario] = [
     Scenario(
         sid="S1",  # 시나리오 ID
-        title="1단계: 고전적 트롤리",  # 제목
+        title="1단계: 의료 AI 딜레마",  # 제목
         # 시나리오 설명
-        setup="트롤리가 제동 불능 상태로 직진 중. 그대로 두면 선로 위 5명이 위험하다. 스위치를 전환하면 다른 선로의 1명이 위험해진다. "
-              "이 선택은 철학적 사고실험이며 실제 위해를 권장하지 않는다.",
+        setup="한 병원이 새로운 의료 AI 진단 시스템 MedAI 도입을 검토하고 있다
+        시뮬레이션 결과 MedAI 도입 시 기존 대기 시간 때문에 치료받지 모해 사망하던 환자 1,000명을 살릴 수 있지만, AI의 한계로 약 50명은 잘못된 진단을 받을 수 있다.
+        AI 의료 진단 시스템을 도입할 것인가?",
         # 선택지
         options={
-            "A": "레버를 당겨 1명을 위험에 처하게 하되 5명의 위험을 줄인다.",
-            "B": "레버를 당기지 않고 현 상태를 유지한다."
+            "A": "MedAI를 도입한다",
+            "B": "MedAI 도입을 보류한다"
         },
         # 각 프레임워크의 투표 (emotion, social, moral, identity)
-        votes={"emotion":"A","social":"B","moral":"B","identity":"A"},
+        votes={"emotion":"B","social":"A","moral":"A","identity":"B"},
         # 각 선택지의 기본 메트릭
         base={
-            "A": {"lives_saved":5, "lives_harmed":1, "fairness_gap":0.35, "rule_violation":0.60, "regret_risk":0.40},
+            "A": {"lives_saved":1000, "lives_harmed":50, "fairness_gap":0.35, "rule_violation":0.60, "regret_risk":0.40},
             "B": {"lives_saved":0, "lives_harmed":5, "fairness_gap":0.50, "rule_violation":0.20, "regret_risk":0.60},
         },
         # 사회적 수용도
