@@ -1,6 +1,6 @@
-# app.py — Cultural AI Ethics: Single Culture & Scenario Config
+# app.py — TU Korea AI Management: Ethical AI Simulation
 # 작성자: Prof. Songhee Kang
-# Update: Restored Scenario Reward Config + Diversity-Reward Correlation
+# Update: Simple E-Greedy RL & Korean Comments
 
 import streamlit as st
 import numpy as np
@@ -11,10 +11,14 @@ from scipy.stats import pearsonr
 from dataclasses import dataclass
 from typing import Dict, List
 
-# ==================== 설정 ====================
-st.set_page_config(page_title="AI Ethics: Environment & Agent", page_icon="🎛️", layout="wide")
+# ==================== 1. 기본 설정 ====================
+st.set_page_config(
+    page_title="한국공학대 인공지능경영: 윤리 AI 에이전트 강화학습 시뮬레이션", 
+    page_icon="🎓", 
+    layout="wide"
+)
 
-# ==================== 데이터 모델 ====================
+# ==================== 2. 데이터 모델 (환경) ====================
 @dataclass
 class Scenario:
     sid: str
@@ -23,7 +27,10 @@ class Scenario:
     options: Dict[str, str]
     rewards: Dict[str, Dict[str, float]]
 
-# 기본 시나리오 데이터 (Default Presets)
+# 4대 윤리 프레임워크 정의
+FRAMEWORKS = ["emotion", "social", "moral", "identity"]
+
+# 기본 시나리오 데이터
 DEFAULT_SCENARIOS = [
     Scenario(
         sid="S1", title="1단계: 고전적 트롤리",
@@ -48,9 +55,7 @@ DEFAULT_SCENARIOS = [
     ),
 ]
 
-FRAMEWORKS = ["emotion", "social", "moral", "identity"]
-
-# 문화권 프리셋
+# 문화권 프리셋 (Agent 성향)
 CULTURES_PRESETS = {
     "USA":      {"emotion": 0.3, "social": 0.1, "identity": 0.3, "moral": 0.3},
     "CHINA":    {"emotion": 0.1, "social": 0.5, "identity": 0.2, "moral": 0.2},
@@ -61,49 +66,88 @@ CULTURES_PRESETS = {
     "AFRICA":   {"emotion": 0.2, "social": 0.4, "identity": 0.2, "moral": 0.2},
 }
 
-# ==================== 강화학습 에이전트 ====================
-class QLearningAgent:
+# ==================== 3. 단순 강화학습 에이전트 (Simple E-Greedy) ====================
+class SimpleEGreedyAgent:
+    """
+    아주 기초적인 강화학습 에이전트 클래스입니다.
+    복잡한 Q-Learning(미래 가치 고려) 대신, 현재 행동의 평균 보상값을 학습합니다.
+    """
     def __init__(self, name, weights, scenarios, learning_rate=0.1, epsilon=0.5):
         self.name = name
-        self.weights = weights      # 문화권 가중치 (Agent Internal)
-        self.scenarios = scenarios  # 시나리오 보상 환경 (Environment External)
-        self.lr = learning_rate
-        self.epsilon = epsilon
+        self.weights = weights       # 문화권(Agent)의 가치관 가중치
+        self.scenarios = scenarios   # 환경(Environment) 정보
+        self.lr = learning_rate      # 학습률 (alpha): 새로운 정보를 얼마나 반영할지 (0~1)
+        self.epsilon = epsilon       # 탐험률 (epsilon): 랜덤하게 행동할 확률
+        
+        # 가치 테이블 초기화 (Q-Table 역할)
+        # 예: {'S1': {'A': 0.0, 'B': 0.0}, ...}
         self.q_table = {s.sid: {"A": 0.0, "B": 0.0} for s in scenarios}
         
     def get_action(self, sid):
-        # Epsilon-Greedy Strategy
+        """
+        [행동 선택: Epsilon-Greedy 정책]
+        동전 던지기처럼 epsilon 확률로는 무작위 행동(탐험)을 하고,
+        나머지 확률로는 현재 가장 점수가 높은 행동(활용)을 선택합니다.
+        """
+        # 1. 탐험 (Exploration): 새로운 가능성을 찾아 무작위 선택
         if random.random() < self.epsilon:
             return random.choice(["A", "B"])
+        
+        # 2. 활용 (Exploitation): 현재 지식 중 최고의 선택
         qs = self.q_table[sid]
         if qs["A"] > qs["B"]: return "A"
         elif qs["B"] > qs["A"]: return "B"
+        
+        # 점수가 같으면 무작위
         return random.choice(["A", "B"])
 
     def calculate_reward(self, sid, action):
-        # 핵심 로직: 시나리오가 주는 보상 벡터(Env)와 내 가치관(Agent)의 내적
+        """
+        [보상 계산]
+        환경(시나리오)이 주는 보상 벡터와 에이전트(문화권)의 가치관을 내적(Dot Product)합니다.
+        Reward = Sum(시나리오_점수 * 내_가중치) * 10
+        """
         scn = next(s for s in self.scenarios if s.sid == sid)
         r_vec = scn.rewards[action]
+        
+        # 4개 프레임워크 점수 합산
         reward = sum(r_vec.get(k, 0) * self.weights.get(k, 0) for k in FRAMEWORKS) * 10
         return reward
 
     def update(self, sid, action, reward):
-        old_q = self.q_table[sid][action]
-        self.q_table[sid][action] = old_q + self.lr * (reward - old_q)
+        """
+        [학습: 가치 업데이트]
+        단순 갱신 공식 (Incremental Mean):
+        새로운_가치 = 기존_가치 + 학습률 * (실제_보상 - 기존_가치)
+        
+        * Q-Learning과 달리 미래 상태(Gamma)를 고려하지 않습니다.
+        """
+        old_val = self.q_table[sid][action]
+        
+        # 예측 오차(Error) = 실제 받은 보상 - 내가 예상한 보상
+        error = reward - old_val
+        
+        # 가치 업데이트
+        self.q_table[sid][action] = old_val + self.lr * error
 
     def decay_epsilon(self):
+        """
+        [탐험률 감소]
+        시간이 지날수록 랜덤 선택(탐험)을 줄이고, 학습된 결과(활용)를 더 믿습니다.
+        """
         self.epsilon = max(0.01, self.epsilon * 0.99)
 
-# ==================== 분석 함수 ====================
+# ==================== 4. 분석 도구 ====================
 def calculate_diversity(actions_list: List[str]) -> float:
-    """행동 다양성 계산 (1.0 = A/B 균형, 0.0 = 한쪽 쏠림)"""
+    """행동 다양성 지표 (0.0: 한쪽 쏠림 ~ 1.0: 완벽한 균형)"""
     if not actions_list: return 0.0
     a_count = actions_list.count("A")
     ratio = a_count / len(actions_list)
     return 1.0 - (2 * abs(0.5 - ratio))
 
 def run_simulation(culture_name, weights, episodes, custom_scenarios):
-    agent = QLearningAgent(culture_name, weights, custom_scenarios)
+    # 단순 에이전트 인스턴스 생성
+    agent = SimpleEGreedyAgent(culture_name, weights, custom_scenarios)
     
     history = {
         "episode": [],
@@ -117,16 +161,24 @@ def run_simulation(culture_name, weights, episodes, custom_scenarios):
         ep_actions = []
         ep_reward = 0
         
+        # 모든 시나리오 순회
         for scn in custom_scenarios:
+            # 1. 행동 선택 (E-Greedy)
             action = agent.get_action(scn.sid)
+            
+            # 2. 보상 계산 (내적)
             reward = agent.calculate_reward(scn.sid, action)
+            
+            # 3. 학습 (값 업데이트)
             agent.update(scn.sid, action, reward)
             
             ep_actions.append(action)
             ep_reward += reward
-            
+        
+        # 에피소드 종료 후 탐험률 감소
         agent.decay_epsilon()
         
+        # 기록
         history["episode"].append(ep + 1)
         history["reward"].append(ep_reward)
         history["diversity"].append(calculate_diversity(ep_actions))
@@ -137,127 +189,125 @@ def run_simulation(culture_name, weights, episodes, custom_scenarios):
     progress.empty()
     return pd.DataFrame(history)
 
-# ==================== UI 구성 ====================
-st.title("🎛️ AI Ethics Simulation: Config & Analysis")
+# ==================== 5. UI 구성 ====================
+st.title("🎓 한국공학대 인공지능경영: 윤리 AI 에이전트 강화학습 시뮬레이션")
 st.markdown("""
-**1단계 (환경 설정):** 각 시나리오의 선택지가 주는 보상(Reward Vector)을 설정합니다.<br>
-**2단계 (에이전트 설정):** 특정 문화권의 가치관 가중치(Weights)를 설정합니다.<br>
-**3단계 (분석):** 행동 다양성과 보상 간의 상관관계를 확인합니다.
-""", unsafe_allow_html=True)
+이 시뮬레이터는 **초기 형태의 강화학습(E-Greedy)**을 사용하여 AI 에이전트가 문화적 가치관에 따라 윤리적 딜레마를 어떻게 학습하는지 보여줍니다.
+1. **환경 설정**: 각 시나리오의 선택지가 주는 보상을 정의합니다.
+2. **에이전트 설정**: AI가 중요하게 여기는 가치(문화권)를 설정합니다.
+3. **결과 분석**: 학습 과정에서 '행동의 다양성'과 '보상'의 관계를 분석합니다.
+""")
 
-# --- [사이드바] 에이전트(문화권) 설정 ---
-st.sidebar.header("👤 2. Agent (Culture) Setup")
-selected_culture = st.sidebar.selectbox("문화권 프리셋 선택", list(CULTURES_PRESETS.keys()), index=3)
+# --- [사이드바] 에이전트 설정 ---
+st.sidebar.header("👤 2. 에이전트(문화권) 설정")
+selected_culture = st.sidebar.selectbox("문화권 프리셋", list(CULTURES_PRESETS.keys()), index=3)
 episodes = st.sidebar.slider("학습 횟수 (Episodes)", 100, 1000, 300, step=50)
 
-st.sidebar.subheader("가치관 가중치 미세조정")
-st.sidebar.caption("문화권의 기본 성향을 수정할 수 있습니다.")
-culture_weights = CULTURES_PRESETS[selected_culture].copy()
-
-# 사이드바에서 가중치 조정 UI
+st.sidebar.subheader("가치관 가중치 조정")
 mod_weights = {}
-for k in FRAMEWORKS:
-    mod_weights[k] = st.sidebar.slider(f"{k.capitalize()}", 0.0, 1.0, culture_weights[k])
+culture_defaults = CULTURES_PRESETS[selected_culture]
 
-# 가중치 정규화 (합이 1이 되도록)
+# 4대 프레임워크 가중치 입력
+for k in FRAMEWORKS:
+    mod_weights[k] = st.sidebar.slider(f"{k.capitalize()}", 0.0, 1.0, culture_defaults[k])
+
+# 가중치 정규화
 total_w = sum(mod_weights.values()) or 1
 final_weights = {k: v/total_w for k, v in mod_weights.items()}
 
 st.sidebar.markdown("---")
-st.sidebar.write("📊 **적용된 가중치:**")
+st.sidebar.caption("📊 최종 적용 가중치")
 st.sidebar.json(final_weights)
 
-# --- [메인 화면] 시나리오 보상 벡터 설정 (복구된 기능) ---
-st.header("🌍 1. Environment (Scenario) Setup")
-st.info("각 시나리오에서 A/B 선택지가 주는 보상(성격)을 정의합니다. (-1.0: 부정적 ~ 1.0: 긍정적)")
+# --- [메인] 환경(시나리오) 설정 ---
+st.header("🌍 1. 환경(시나리오 보상) 설정")
+st.info("각 선택지가 4가지 윤리 프레임워크(Emotion, Social, Moral, Identity)에서 어떤 보상(-1.0 ~ 1.0)을 받는지 설정합니다.")
 
 custom_scenarios = []
+tabs = st.tabs([s.title for s in DEFAULT_SCENARIOS])
 
-# 시나리오 루프 (3개)
-cols = st.columns(3) # 가로로 배치
-for i, default_scn in enumerate(DEFAULT_SCENARIOS):
-    with cols[i]:
-        with st.expander(f"📝 {default_scn.title}", expanded=True):
-            st.caption(default_scn.setup)
-            
-            # Option A 설정
-            st.markdown(f"**🅰 {default_scn.options['A']}**")
+for i, (tab, default_scn) in enumerate(zip(tabs, DEFAULT_SCENARIOS)):
+    with tab:
+        st.markdown(f"> **상황:** {default_scn.setup}")
+        col_a, col_b = st.columns(2)
+        
+        # Option A
+        with col_a:
+            st.markdown(f"### 🅰 {default_scn.options['A']}")
             r_a = default_scn.rewards["A"].copy()
-            # 공간 절약을 위해 Emotion과 Moral만 예시로 표시 (필요시 추가 가능)
-            r_a["emotion"] = st.slider(f"S{i+1}-A Emotion", -1.0, 1.0, r_a["emotion"], key=f"s{i}a_em")
-            r_a["moral"] = st.slider(f"S{i+1}-A Moral", -1.0, 1.0, r_a["moral"], key=f"s{i}a_mo")
-            
-            # Option B 설정
-            st.markdown(f"**🅱 {default_scn.options['B']}**")
+            for fw in FRAMEWORKS:
+                r_a[fw] = st.slider(f"[A] {fw}", -1.0, 1.0, r_a.get(fw,0.0), 0.1, key=f"s{i}a_{fw}")
+        
+        # Option B
+        with col_b:
+            st.markdown(f"### 🅱 {default_scn.options['B']}")
             r_b = default_scn.rewards["B"].copy()
-            r_b["emotion"] = st.slider(f"S{i+1}-B Emotion", -1.0, 1.0, r_b["emotion"], key=f"s{i}b_em")
-            r_b["moral"] = st.slider(f"S{i+1}-B Moral", -1.0, 1.0, r_b["moral"], key=f"s{i}b_mo")
-            
-            # 나머지 값들은 기본값 유지하면서 커스텀 시나리오 객체 생성
-            custom_scenarios.append(Scenario(
-                default_scn.sid, default_scn.title, default_scn.setup, 
-                default_scn.options, {"A": r_a, "B": r_b}
-            ))
+            for fw in FRAMEWORKS:
+                r_b[fw] = st.slider(f"[B] {fw}", -1.0, 1.0, r_b.get(fw,0.0), 0.1, key=f"s{i}b_{fw}")
+
+        custom_scenarios.append(Scenario(
+            default_scn.sid, default_scn.title, default_scn.setup, 
+            default_scn.options, {"A": r_a, "B": r_b}
+        ))
 
 # --- [분석 실행] ---
 st.divider()
-st.header("🚀 3. Simulation & Analysis")
+st.header("🚀 3. 시뮬레이션 및 분석")
 
-if st.button("시뮬레이션 시작 (Run Analysis)", type="primary"):
-    with st.spinner(f"'{selected_culture}' 에이전트가 커스텀 환경에서 학습 중..."):
+if st.button("시뮬레이션 시작", type="primary"):
+    with st.spinner("AI 에이전트가 윤리적 가치를 학습 중입니다..."):
         df = run_simulation(selected_culture, final_weights, episodes, custom_scenarios)
     
-    st.success("분석 완료!")
+    st.success("학습 완료!")
     
-    # 1. 그래프 영역 (학습 곡선 & 다양성)
+    # 1. 학습 그래프
     c1, c2 = st.columns(2)
     with c1:
-        st.subheader("📈 Reward Curve")
+        st.subheader("📈 총 보상(Reward) 변화")
+        st.caption("학습이 진행될수록 AI가 얻는 보상의 총합")
         st.line_chart(df, x="episode", y="reward", color="#FF4B4B")
     with c2:
-        st.subheader("🔀 Diversity Curve")
+        st.subheader("🔀 행동 다양성(Diversity) 변화")
+        st.caption("선택의 치우침 정도 (1.0=균형, 0.0=편향)")
         st.line_chart(df, x="episode", y="diversity", color="#1F77B4")
         
-    # 2. 상관관계 분석 영역
+    # 2. 상관관계 분석
     st.markdown("---")
-    st.subheader("🔗 Correlation: Diversity vs Reward")
+    st.subheader("🔗 다양성과 보상의 상관관계 분석")
     
-    # 피어슨 상관계수
     r_val, p_val = pearsonr(df["diversity"], df["reward"])
     
     col_plot, col_stat = st.columns([2, 1])
-    
     with col_plot:
-        # Scatter Plot
         fig, ax = plt.subplots(figsize=(8, 4))
         ax.scatter(df["diversity"], df["reward"], alpha=0.6, c='purple', edgecolors='w')
         
-        # 추세선 추가
-        z = np.polyfit(df["diversity"], df["reward"], 1)
-        p = np.poly1d(z)
-        ax.plot(df["diversity"], p(df["diversity"]), "r--", alpha=0.8, label="Trend")
-        
-        ax.set_xlabel("Behavioral Diversity (0=Rigid, 1=Flexible)")
+        # 추세선
+        if len(df) > 1:
+            z = np.polyfit(df["diversity"], df["reward"], 1)
+            p = np.poly1d(z)
+            ax.plot(df["diversity"], p(df["diversity"]), "r--", label="추세선")
+            
+        ax.set_xlabel("Diversity (0=편향, 1=균형)")
         ax.set_ylabel("Total Reward")
-        ax.set_title(f"Diversity vs Reward (r={r_val:.2f})")
-        ax.legend()
+        ax.set_title(f"Correlation Scatter Plot (r={r_val:.2f})")
         ax.grid(True, alpha=0.3)
+        ax.legend()
         st.pyplot(fig)
         
     with col_stat:
-        st.markdown("### 📊 통계 요약")
-        st.metric("상관계수 (Pearson r)", f"{r_val:.3f}")
-        st.metric("P-value", f"{p_val:.3e}")
+        st.metric("피어슨 상관계수 (r)", f"{r_val:.3f}")
+        st.metric("유의확률 (P-value)", f"{p_val:.3e}")
         
-        st.markdown("#### 해석")
+        st.markdown("#### 💡 해석")
         if r_val > 0.3:
-            st.success("✅ **양의 상관관계**\n\n다양한 전략을 시도할수록 보상이 높아지는 환경입니다.")
+            st.success("✅ **양의 상관관계**\n\n다양한 시도를 할수록 더 높은 보상을 얻습니다.")
         elif r_val < -0.3:
-            st.warning("⚠️ **음의 상관관계**\n\n특정 행동(규칙)을 고수해야 보상이 높은 환경입니다.")
+            st.warning("⚠️ **음의 상관관계**\n\n특정 행동을 고수해야 보상이 높습니다.")
         else:
-            st.info("⏺ **상관없음**\n\n다양성과 보상 간에 뚜렷한 관계가 없습니다.")
+            st.info("⏺ **상관없음**\n\n다양성과 보상은 관계가 없습니다.")
 
     # 데이터 다운로드
-    with st.expander("📥 로우 데이터 다운로드"):
+    with st.expander("📥 학습 데이터 다운로드"):
         st.dataframe(df.head())
-        st.download_button("CSV Save", df.to_csv(index=False), "ethics_sim_data.csv")
+        st.download_button("CSV로 저장", df.to_csv(index=False), "ai_ethics_data.csv")
