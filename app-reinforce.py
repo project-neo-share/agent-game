@@ -288,7 +288,7 @@ if st.button("시뮬레이션 시작", type="primary"):
             p = np.poly1d(z)
             ax.plot(df["diversity"], p(df["diversity"]), "r--", label="추세선")
             
-        ax.set_xlabel("Diversity (0=편향, 1=균형)")
+        ax.set_xlabel("Diversity (0=Bias, 1=Fair/Balance)")
         ax.set_ylabel("Total Reward")
         ax.set_title(f"Correlation Scatter Plot (r={r_val:.2f})")
         ax.grid(True, alpha=0.3)
