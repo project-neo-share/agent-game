@@ -161,7 +161,7 @@ def run_simulation(culture_name, weights, episodes, custom_scenarios):
 # ==================== 5. UI 구성 ====================
 st.title("🎲 한국공학대: 무작위(Random) AI 에이전트 시뮬레이션")
 st.markdown("""
-이 시뮬레이터는 **학습 능력이 없는 무작위 에이전트(Random Agent)**를 구동합니다.
+이 시뮬레이터는 **학습 능력이 없는 무작위 에이전트**(Random Agent)를 구동합니다.
 E-Greedy 학습 모델과 비교하여 **"왜 학습이 중요한가?"** 를 보여주는 비교 실험용입니다.
 
 - **특징**: 모든 선택을 동전 던지기(50:50)로 결정합니다.
